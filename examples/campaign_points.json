@@ -1,0 +1,6 @@
+{
+  "points": [
+    {"id": "rc_a", "parameters": {"R": "1k", "C": "50f"}, "rationale": "Example candidate A"},
+    {"id": "rc_b", "parameters": {"R": "2k", "C": "50f"}, "rationale": "Example candidate B"}
+  ]
+}

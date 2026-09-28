@@ -88,6 +88,38 @@ analog-agent analyze RUN_DIR      # only after local verification
 
 `workflow.submission` selects `manual` or `auto`; `return_mode` selects compact `summary` or full parsed data; `cleanup` selects `never` or local raw-file removal `after_success`. `simulation.remote_cleanup` is `never`, `manual`, or `after_verified`; `cleanup-remote RUN_DIR` calls the private adapter only after local verification. Do not treat a queue acceptance or process exit alone as simulation success.
 
+### Durable parallel campaigns
+
+For a user/analysis-AI-selected sweep, add an optional `campaign` block to `project.json`. These are execution limits, **not circuit-design defaults**:
+
+```json
+{
+  "campaign": {
+    "max_parallel": 2,
+    "max_points_per_cycle": 16,
+    "max_cycles": 10,
+    "max_total_points": 100,
+    "poll_interval_s": 10,
+    "metric_directions": {"gain_1g_db": "max"}
+  }
+}
+```
+
+Create a campaign, review a points file such as [the RC example](examples/campaign_points.json), and run one cycle:
+
+```sh
+analog-agent campaign new project.json
+analog-agent campaign add CAMPAIGN_DIR examples/campaign_points.json
+analog-agent campaign run CAMPAIGN_DIR --max-seconds 3600
+analog-agent campaign status CAMPAIGN_DIR
+```
+
+`campaign run` schedules at most `max_parallel` points at once and polls locally without an LLM call per job. Each finished run is retrieved, verified, and analyzed promptly; the cycle comparison is written only when every point is analyzed or has failed. The report lists parameters, metrics, verdicts, failures, and optional Pareto sets. No score, initial gₘ/Iᴅ point, search algorithm, or universal specification is built in. `metric_directions` only defines optional Pareto directions; the user and analysis AI choose the next cycle or final result.
+
+After review, call `campaign add CAMPAIGN_DIR NEXT_POINTS.json --decision "reason" --select POINT_ID` for another cycle, or `campaign finish CAMPAIGN_DIR --decision "reason" --select POINT_ID`. A private function configured as `campaign.proposer` (`private/agents/analysis/scripts/site_proposer.py:propose`) can generate an initial or next-cycle proposal with `campaign propose CAMPAIGN_DIR`; inspect its saved JSON and explicitly `add` it. The [private proposer template](private.example/agents/analysis/scripts/site_proposer.py) intentionally contains no PDK method or automatic optimizer.
+
+If a chat loses context or tokens, use `campaign doctor CAMPAIGN_DIR` to inspect durable point/run states and `campaign brief CAMPAIGN_DIR` for a compact AI handoff; then `campaign run` or `campaign step` continues without old chat history. `campaign pause`/`resume` stop/restart local scheduling, not already-submitted remote jobs. An interrupted submission with no local receipt is marked uncertain and **never blindly resubmitted**. An LSF site adapter may implement optional `reconcile(run, config, staged, intent)` to look up the real job by run ID; `analog-agent reconcile RUN_DIR` adopts that verified receipt, after which `campaign retry CAMPAIGN_DIR POINT_ID` re-enables the safe step. Without that lookup, inspect the scheduler manually and do not retry. A cycle freezes the public config, private overrides, and declared input-file hashes (template, rules, plugins, includes); list additional site files in `campaign.dependencies`. Change circuit configuration between cycles, not midway through one. Campaigns live under ignored `<project>/campaigns/`; ignore that directory in an independent project too. Run and resume each campaign in the same Windows or WSL path environment.
+
 ## Results, waveform tools, and role boundaries
 
 The netlist worker owns `netlist_result.json`; the simulation worker owns `simulation_plan.json`, staging/submission/poll/retrieval handoffs, and finally `simulation_result.json`; the analysis worker owns `analysis_result.json`. The design netlist cannot be edited after its hash is handed off. Project-specific metric hooks receive parsed data and return scalar values. A `PASS` means **only that the user's configured `rules` passed**; it does not imply a universal circuit specification.

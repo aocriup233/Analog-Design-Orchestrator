@@ -20,6 +20,14 @@ class SiteLSFAdapter:
         """
         raise NotImplementedError
 
+    def reconcile(self, run, config, staged, intent):
+        """Optional: look up run.name in the scheduler after an uncertain submit.
+
+        Return the existing real job_id and state; never create a new job here.
+        Delete this method if the site cannot safely implement that lookup.
+        """
+        raise NotImplementedError
+
     def poll(self, run, config, submitted):
         """Return {'state': 'SUBMITTED'|'RUN'|'DONE'|'FAILED', ...}."""
         raise NotImplementedError

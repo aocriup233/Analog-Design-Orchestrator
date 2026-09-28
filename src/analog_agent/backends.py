@@ -123,6 +123,15 @@ class LSFBackend:
             raise ValueError("LSF submit must return job_id and submitted state")
         return result
 
+    def reconcile(self, run: Path, config: dict, staged: dict, intent: dict) -> dict:
+        """Optional site lookup by stable run ID after an uncertain submit."""
+        if not callable(getattr(self.adapter, "reconcile", None)):
+            raise NotImplementedError("Site adapter has no reconcile method; inspect its scheduler manually")
+        result = self._call("reconcile", run, config, staged, intent)
+        if not result.get("job_id") or result.get("state") not in {"SUBMITTED", "RUN", "DONE", "FAILED"}:
+            raise ValueError("LSF reconcile must return a real job_id and valid state")
+        return result
+
     def poll(self, run: Path, config: dict, submitted: dict) -> dict:
         result = self._call("poll", run, config, submitted)
         if result.get("state") not in {"SUBMITTED", "RUN", "DONE", "FAILED"}:

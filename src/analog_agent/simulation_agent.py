@@ -72,12 +72,27 @@ def submit(run: Path, simulator_factory=None) -> dict:
             raise ValueError("Persisted submission handoff has different input hashes")
         result = payload["backend_data"]
     else:
+        intent = run / "submission_intent.json"
+        if intent.is_file():
+            previous = read_json(intent)
+            if previous.get("deck_sha256") != staged["deck_sha256"]:
+                raise ValueError("Submission intent has a different deck hash")
+            raise ValueError("Submission outcome unknown; inspect the backend by run ID before retrying")
+        write_json(intent, {"started_at": utc_now(), "run_id": run.name,
+                            "backend": staged["backend"],
+                            "deck_sha256": staged["deck_sha256"]})
         backend = backend_for(cfg, run, simulator_factory)
         result = backend.submit(run, cfg, staged["backend_data"])
+    return _record_submission(run, staged, result, existing)
+
+
+def _record_submission(run: Path, staged: dict, result: dict, existing: Path) -> dict:
     state = result.get("state")
     if state not in {"SUBMITTED", "RUN", "DONE", "FAILED"}:
         raise ValueError(f"Backend submitted an invalid state: {state}")
-    if not existing.is_file():
+    if existing.is_file():
+        payload = read_json(existing)
+    else:
         payload = {"status": state, "submitted_at": utc_now(), "backend": staged["backend"],
                    "netlist_sha256": staged["netlist_sha256"], "deck_sha256": staged["deck_sha256"],
                    "backend_data": json_safe(result)}
@@ -96,6 +111,28 @@ def submit(run: Path, simulator_factory=None) -> dict:
         if state == "DONE":
             transition(run, "DONE")
     return payload
+
+
+def reconcile_submission(run: Path) -> dict:
+    """Adopt a remote job found by a private adapter; never submit it again."""
+    run = run.resolve()
+    if status(run) != "STAGED":
+        raise ValueError("Reconciliation requires a STAGED run")
+    existing = run / "submission_result.json"
+    if existing.is_file():
+        return submit(run)
+    intent_path = run / "submission_intent.json"
+    if not intent_path.is_file():
+        raise ValueError("No uncertain submission intent exists")
+    cfg, _, _ = _config_and_netlist(run)
+    if cfg.get("simulation", {}).get("backend") != "lsf":
+        raise ValueError("Automatic reconciliation requires an LSF site adapter")
+    staged = read_json(run / "staging_result.json")
+    intent = read_json(intent_path)
+    if intent.get("deck_sha256") != staged["deck_sha256"] or intent.get("run_id") != run.name:
+        raise ValueError("Submission intent does not match this run")
+    result = backend_for(cfg, run).reconcile(run, cfg, staged["backend_data"], intent)
+    return _record_submission(run, staged, result, existing)
 
 
 def poll(run: Path) -> dict:

@@ -88,6 +88,38 @@ Bridge/本地模式的 `submit` 一次完成；LSF 模式返回 run，待作业�
 
 `workflow.submission` 为 `manual` 或 `auto`；`return_mode` 为精简 `summary` 或完整解析数据；`cleanup` 为 `never` 或通过分析后清理本地 raw 的 `after_success`。`simulation.remote_cleanup` 可选 `never`、`manual`、`after_verified`；`cleanup-remote RUN_DIR` 只在本地验证后调用私有后端。队列接受任务或工具命令退出，都不能单独证明仿真成功。
 
+### 可续跑的并行设计会话
+
+用户或分析 AI 决定扫参点时，可在 `project.json` 增加可选的 `campaign` 配置。以下仅是**执行额度**，不是电路初值或性能标准：
+
+```json
+{
+  "campaign": {
+    "max_parallel": 2,
+    "max_points_per_cycle": 16,
+    "max_cycles": 10,
+    "max_total_points": 100,
+    "poll_interval_s": 10,
+    "metric_directions": {"gain_1g_db": "max"}
+  }
+}
+```
+
+创建会话，审核候选点文件（例如 [RC 示例](examples/campaign_points.json)），再执行一轮：
+
+```sh
+analog-agent campaign new project.json
+analog-agent campaign add CAMPAIGN_DIR examples/campaign_points.json
+analog-agent campaign run CAMPAIGN_DIR --max-seconds 3600
+analog-agent campaign status CAMPAIGN_DIR
+```
+
+`campaign run` 同时最多运行 `max_parallel` 个点，轮询由本地脚本负责，不必让 LLM 逐个盯作业。每个任务完成后即取回、校验、分析；全部任务分析或失败后才生成本轮对比报告，包含参数、指标、判定、失败信息和可选的 Pareto 集。核心**不内置**评分公式、gₘ/Iᴅ 初值、优化算法或统一 spec。`metric_directions` 仅控制可选的 Pareto 方向；下一轮点位和最终选择由用户及分析 AI 决定。
+
+审核后，可用 `campaign add CAMPAIGN_DIR NEXT_POINTS.json --decision "理由" --select POINT_ID` 开启下一轮，或用 `campaign finish CAMPAIGN_DIR --decision "理由" --select POINT_ID` 收尾。用户可在私有配置中指定 `campaign.proposer`（如 `private/agents/analysis/scripts/site_proposer.py:propose`），通过 `campaign propose CAMPAIGN_DIR` 生成候选建议；审核保存的 JSON 后再明确调用 `add`。仓库的[私有提案模板](private.example/agents/analysis/scripts/site_proposer.py)不包含 PDK 方法或自动优化器。
+
+若聊天因 token 不足而中断，先运行 `campaign doctor CAMPAIGN_DIR` 检查持久化状态，再用 `campaign brief CAMPAIGN_DIR` 获取供 AI 接续的精简摘要；随后 `campaign run` 或 `campaign step` 可脱离旧聊天记录续跑。`campaign pause`/`resume` 暂停或恢复本地调度，不会停止已提交的远端作业。若提交可能已发生但本地没有回执，状态会被标为不确定，**绝不盲目重投**。LSF 私有适配器可选实现 `reconcile(run, config, staged, intent)`，按 run ID 查找真实作业；`analog-agent reconcile RUN_DIR` 接管查证过的回执后，才可用 `campaign retry CAMPAIGN_DIR POINT_ID` 重新启用该步骤。没有查询能力时，须人工核对调度器，不可直接重试。同一轮会冻结公用配置、私有 override 和已声明的模板、规则、插件、include 文件哈希；其他站点依赖可列入 `campaign.dependencies`。应在两轮之间修改电路配置。会话数据放在被忽略的 `<project>/campaigns/`，独立用户工程也应忽略该目录；同一会话必须在相同的 Windows 或 WSL 路径环境中续跑。
+
 ## 结果、波形与角色边界
 
 网表 worker 负责 `netlist_result.json`；仿真 worker 负责 `simulation_plan.json`、暂存/提交/轮询/回传文件，验证后才写 `simulation_result.json`；分析 worker 负责 `analysis_result.json`。设计网表交接后不可再改动。项目专属指标插件接收解析后的数据并返回数值。`PASS` **仅表示用户配置的 `rules` 通过**，不是某种电路的通用性能保证。
