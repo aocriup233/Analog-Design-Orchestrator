@@ -1,0 +1,6 @@
+{
+  "source": {"path": "../../../examples/waveform.csv", "format": "csv", "x": "time", "y": "out"},
+  "operation": "windows",
+  "options": {"start": 0, "width": 4e-9, "count": 4, "step": 4e-9},
+  "output": "../../../output/windows.png"
+}

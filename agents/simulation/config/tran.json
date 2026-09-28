@@ -1,0 +1,5 @@
+{
+  "kind": "tran",
+  "name": "tran",
+  "options": {"stop": "10n", "maxstep": "1p"}
+}

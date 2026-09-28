@@ -1,0 +1,6 @@
+{
+  "source": {"path": "../../../examples/waveform.csv", "format": "csv", "x": "time", "y": "out"},
+  "operation": "eye",
+  "options": {"origin": 0, "ui": 4e-9, "count": 4},
+  "output": "../../../output/eye.png"
+}

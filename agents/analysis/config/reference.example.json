@@ -1,0 +1,6 @@
+{
+  "source": {"path": "../../../examples/waveform.csv", "format": "csv", "x": "time", "y": "out"},
+  "operation": "reference",
+  "options": {"value": 0, "tolerance": 0.5},
+  "output": "../../../output/reference.png"
+}

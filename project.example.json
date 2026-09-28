@@ -1,0 +1,32 @@
+{
+  "name": "rc_demo",
+  "template": "examples/rc_template.scs",
+  "parameters": {
+    "R": {"initial": "1k", "candidates": ["1k", "2k"]},
+    "C": {"initial": "50f", "candidates": ["50f", "100f"]}
+  },
+  "simulation": {
+    "backend": "bridge",
+    "mode": "ax",
+    "timeout_s": 600,
+    "profile": null,
+    "include_files": [],
+    "rules": ["agents/simulation/config/dc.json", "agents/simulation/config/ac.json"],
+    "save_signals": ["VIN", "VO"],
+    "output_format": "psfascii",
+    "keep_remote_files": false
+  },
+  "metrics": {
+    "dc_vo": {"kind": "scalar", "key": "dc_VO"},
+    "gain_1g_db": {"kind": "ac_db_at", "signal": "ac_VO", "frequency_key": "ac_freq", "at_hz": 1000000000.0}
+  },
+  "rules": {
+    "gain_1g_db": {"min": -3.0}
+  },
+  "workflow": {
+    "submission": "manual",
+    "return_mode": "summary",
+    "cleanup": "never",
+    "max_iterations": 2
+  }
+}

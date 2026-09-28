@@ -1,0 +1,5 @@
+{
+  "kind": "ac",
+  "name": "ac",
+  "options": {"start": "1M", "stop": "100G", "dec": 20}
+}

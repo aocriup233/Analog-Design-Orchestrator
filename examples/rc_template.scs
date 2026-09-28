@@ -1,0 +1,5 @@
+simulator lang=spectre
+global 0
+V0 (VIN 0) vsource dc=1 mag=1
+R0 (VIN VO) resistor r=@@R@@
+C0 (VO 0) capacitor c=@@C@@

@@ -1,0 +1,7 @@
+{
+  "source": {"path": "../../../examples/waveform.csv", "format": "csv", "x": "time", "y": "out"},
+  "operation": "fft",
+  "options": {"window": "hann", "remove_mean": true},
+  "output": "../../../output/fft.png",
+  "spectrum_csv": "../../../output/fft.csv"
+}

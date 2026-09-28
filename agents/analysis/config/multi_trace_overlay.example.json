@@ -1,0 +1,10 @@
+{
+  "sources": [
+    {"path": "../../../examples/waveform.csv", "format": "csv", "x": "time", "y": "out", "label": "signal A"},
+    {"path": "../../../examples/waveform.csv", "format": "csv", "x": "time", "y": "out", "label": "signal B"}
+  ],
+  "operation": "overlay",
+  "x_label": "Time (s)",
+  "y_label": "Amplitude",
+  "output": "../../../output/multi_trace_overlay.png"
+}

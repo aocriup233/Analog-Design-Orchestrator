@@ -1,0 +1,5 @@
+{
+  "source": {"path": "../../../examples/waveform.csv", "format": "csv", "x": "time", "y": "out"},
+  "operation": "sample",
+  "options": {"points": [2e-9, 6e-9, 10e-9]}
+}

@@ -1,0 +1,9 @@
+{
+  "simulation": {
+    "backend": "bridge",
+    "profile": null,
+    "spectre_cmd": "spectre",
+    "keep_remote_files": false,
+    "include_files": []
+  }
+}
