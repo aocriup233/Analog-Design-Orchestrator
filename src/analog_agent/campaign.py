@@ -224,6 +224,67 @@ def add_cycle(campaign: Path, points_path: Path, *, decision: str = "",
                 "point_count": len(points), "status": "ACTIVE"}
 
 
+def attach_verified_run(campaign: Path, point_id: str, run: Path, reason: str) -> dict:
+    """Reuse a verified run after a review-safe analysis input revision.
+
+    This never submits a simulator. Source topology, exact parameters, public
+    config, private overrides, and simulation handoffs must still agree.
+    """
+    if not reason.strip():
+        raise ValueError("Attaching a run needs an audit reason")
+    campaign = campaign.resolve()
+    run = run.resolve(strict=True)
+    with _lock(campaign):
+        manifest = _manifest(campaign)
+        if manifest["status"] != "ACTIVE":
+            raise ValueError("Attach is allowed only before executing an active cycle")
+        cycle = manifest["cycles"][-1]
+        issue = _cycle_input_issue(manifest, cycle)
+        if issue:
+            raise ValueError(f"Cannot attach while cycle inputs differ: {issue}")
+        if any(item["run"] and not item.get("attached") for item in cycle["points"]):
+            raise ValueError("Attach before this cycle creates any new run")
+        point = next((item for item in cycle["points"] if item["id"] == point_id), None)
+        if point is None:
+            raise ValueError("Unknown campaign point")
+        if point["run"]:
+            raise ValueError("Campaign point already has a run")
+        root = Path(manifest["project_config"]).parent.resolve()
+        if not run.is_relative_to(root / "runs"):
+            raise ValueError("Run is outside this project's runs directory")
+        if run_status(run) != "VERIFIED" or (run / "analysis_result.json").exists():
+            raise ValueError("Only a verified, not-yet-analyzed run may be attached")
+        run_cfg = run_config(run)
+        project_cfg = load_config(Path(manifest["project_config"]))
+        if read_json(run / "config.json") != {
+                **read_json(Path(manifest["project_config"])),
+                "_project_root": str(root),
+                "_config_path": str(Path(manifest["project_config"]).resolve())}:
+            raise ValueError("Run public configuration differs from this campaign")
+        if (private_manifest(root) != cycle["private_manifest"] or
+                run_cfg["parameters"] != project_cfg["parameters"]):
+            raise ValueError("Run private or parameter configuration differs")
+        task = read_json(run / "task.json")
+        net = read_json(run / "netlist_result.json")
+        plan_path = run / "simulation_plan.json"
+        plan = read_json(plan_path) if plan_path.is_file() else {
+            "deck": net["netlist"], "deck_sha256": net["netlist_sha256"],
+            "design_sha256": net["netlist_sha256"]}
+        if task.get("overrides") != point["parameters"] or net.get("parameters") != point["parameters"]:
+            raise ValueError("Run parameter point differs")
+        if (sha256(Path(net["netlist"])) != net["netlist_sha256"] or
+                sha256(Path(plan["deck"])) != plan["deck_sha256"] or
+                plan["design_sha256"] != net["netlist_sha256"]):
+            raise ValueError("Run netlist or deck handoff differs")
+        if (not (run / "submission_result.json").is_file() or
+                read_json(run / "simulation_result.json").get("status") != "DONE"):
+            raise ValueError("Verified simulation evidence is incomplete")
+        point["run"] = str(run)
+        point["attached"] = {"reason": reason, "at": utc_now()}
+        _save(campaign, manifest)
+    return inspect_campaign(campaign)
+
+
 def _point_state(point: dict) -> str:
     return run_status(Path(point["run"])) if point["run"] else "QUEUED"
 

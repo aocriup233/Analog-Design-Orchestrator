@@ -55,6 +55,11 @@ def main() -> int:
     campaign_retry = actions.add_parser("retry", help="Explicitly retry a safe interrupted point")
     campaign_retry.add_argument("campaign", type=Path)
     campaign_retry.add_argument("point_id")
+    campaign_attach = actions.add_parser("attach", help="Reuse a verified run without resubmitting")
+    campaign_attach.add_argument("campaign", type=Path)
+    campaign_attach.add_argument("point_id")
+    campaign_attach.add_argument("run", type=Path)
+    campaign_attach.add_argument("--reason", required=True)
     campaign_finish = actions.add_parser("finish", help="Record the final user/AI decision")
     campaign_finish.add_argument("campaign", type=Path)
     campaign_finish.add_argument("--decision", required=True)
@@ -133,6 +138,9 @@ def main() -> int:
             output = campaign_flow.resume(args.campaign)
         elif action == "retry":
             output = campaign_flow.retry(args.campaign, args.point_id)
+        elif action == "attach":
+            output = campaign_flow.attach_verified_run(args.campaign, args.point_id,
+                                                       args.run, args.reason)
         elif action == "finish":
             output = campaign_flow.finish(args.campaign, args.decision, args.select)
         else:

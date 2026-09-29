@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from analog_agent.campaign import (add_cycle, brief, create_campaign, finish, inspect_campaign,
+from analog_agent.campaign import (add_cycle, attach_verified_run, brief, create_campaign, finish, inspect_campaign,
                                    pause, propose, resume, retry, step)
 from analog_agent.core import read_json, write_json
 from analog_agent.simulation_agent import reconcile_submission
@@ -244,6 +244,15 @@ class CampaignTest(unittest.TestCase):
             transition(run, "VERIFIED")
 
         verified_external_run(0, 1.0)
+        verified_run = Path(read_json(campaign / "campaign.json")["cycles"][0]["points"][0]["run"])
+        recovered = create_campaign(self.config)
+        add_cycle(recovered, self._points(["1k"]))
+        with self.assertRaisesRegex(ValueError, "audit reason"):
+            attach_verified_run(recovered, "p1", verified_run, "")
+        self.assertEqual(attach_verified_run(recovered, "p1", verified_run,
+                                            "Re-evaluate analysis without resubmitting")["cycles"][0]
+                         ["counts"], {"VERIFIED": 1})
+        self.assertEqual(step(recovered)["status"], "REVIEW")
         second = step(campaign)
         self.assertEqual(second["status"], "AWAITING_EXECUTION")
         self.assertEqual(second["cycles"][0]["counts"], {"ANALYZED": 1, "STAGED": 1})

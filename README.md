@@ -122,6 +122,8 @@ If a chat loses context or tokens, use `campaign doctor CAMPAIGN_DIR` to inspect
 
 For sites that require an interactive or otherwise out-of-process executor, set `simulation.backend` to `external`. The same `campaign step/run/doctor` workflow stages a hashed deck and returns `AWAITING_EXECUTION` without submitting it. A private site simulation worker then performs transfer, submission, retrieval, and verification, writing the normal run handoffs and reaching `VERIFIED`; the next `campaign step` invokes the analysis role and continues the cycle. The core never embeds SSH, Telnet, LSF, or credential handling, and the site worker must preserve the run's state and hash contract. `external` is a resumable coordination boundary, not unattended simulation.
 
+If analysis inputs must be corrected after a run is verified, keep the original campaign for audit and create a new one with the corrected inputs. `campaign attach CAMPAIGN_DIR POINT_ID VERIFIED_RUN --reason "..."` checks the project, exact point, netlist/deck hashes, and simulation receipt before reusing that run; it never resubmits the job.
+
 ## Results, waveform tools, and role boundaries
 
 The netlist worker owns `netlist_result.json`; the simulation worker owns `simulation_plan.json`, staging/submission/poll/retrieval handoffs, and finally `simulation_result.json`; the analysis worker owns `analysis_result.json`. The design netlist cannot be edited after its hash is handed off. Project-specific metric hooks receive parsed data and return scalar values. A `PASS` means **only that the user's configured `rules` passed**; it does not imply a universal circuit specification.

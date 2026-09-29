@@ -122,6 +122,8 @@ analog-agent campaign status CAMPAIGN_DIR
 
 若站点必须通过交互式或其他进程外方式执行仿真，可设 `simulation.backend` 为 `external`。相同的 `campaign step/run/doctor` 工作流只生成并暂存带哈希的 deck，返回 `AWAITING_EXECUTION`，不会自行提交。私有站点仿真角色完成传输、提交、取回和验证，写入标准 run 交接文件并达到 `VERIFIED`；下一次 `campaign step` 继续调用分析角色和设计循环。通用核心不包含 SSH、Telnet、LSF 或凭据处理；站点角色必须遵守 run 状态与哈希契约。`external` 是可恢复的协调边界，不代表无人值守仿真。
 
+若某次仿真已核验、随后必须修正分析输入，可保留原 campaign 作为审计记录，并用修正后的输入新建 campaign。`campaign attach CAMPAIGN_DIR POINT_ID VERIFIED_RUN --reason "..."` 会检查工程、精确参数点、网表/deck 哈希和仿真回执，再复用该 run；不会重投作业。
+
 ## 结果、波形与角色边界
 
 网表 worker 负责 `netlist_result.json`；仿真 worker 负责 `simulation_plan.json`、暂存/提交/轮询/回传文件，验证后才写 `simulation_result.json`；分析 worker 负责 `analysis_result.json`。设计网表交接后不可再改动。项目专属指标插件接收解析后的数据并返回数值。`PASS` **仅表示用户配置的 `rules` 通过**，不是某种电路的通用性能保证。
