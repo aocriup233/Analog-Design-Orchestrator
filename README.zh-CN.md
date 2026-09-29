@@ -10,7 +10,7 @@ ADO 把电路决策与 EDA 环境操作分开：用户或外部 LLM 控制器提
 
 ## 已实现的能力与边界
 
-- 设计网表 `input.scs` 与仿真 agent 管理的 `simulation.scs` 分离；DC、AC、瞬态分析通过可复用规则文件配置。
+- 设计网表 `input.scs` 与仿真 agent 管理的 `simulation.scs` 分离；DC、AC、STB、瞬态分析通过可复用规则文件配置。
 - Bridge、本地 Spectre，以及异步 LSF 的**后端接口**。LSF 必须由用户实现私有站点适配器；仓库提供的是接口模板，不是已经连通的集群配置。
 - 持久化状态 `CREATED → NETLIST_READY → STAGED → SUBMITTED → RUN → DONE → RETRIEVED → VERIFIED → ANALYZED`。短作业可能跳过 `RUN`，明确失败进入 `FAILED`。`resume` 每次轮询一次；作业完成后继续取回与校验。
 - 通用波形分窗、重叠、取点、参考线对照、眼图及 FFT；电路专属指标由项目插件提供。
@@ -43,7 +43,7 @@ analog-agent new project.json
 | 电路项目 | 设计模板**或** `netlist.generator`、合法参数与候选值、分析类型、保存信号、指标插件和由用户定义的判定规则 | `<project>/project.json`、模板及规则/插件文件 |
 | 私有全局环境 | 仿真器路径或 Bridge profile；若用 LSF，还需主机与传输拓扑、队列及资源、远端目录、PDK 模型路径和 section | `<project>/private/global/config/` 与私有复用脚本 |
 | 网表角色 | 工艺合法器件、引脚顺序、模型 include 和电路专属生成器 | `<project>/private/agents/netlist/` |
-| 仿真角色 | DC/AC/tran/自定义规则、执行后端与站点适配器、轮询/回传/清理策略 | `<project>/private/agents/simulation/` 及 `simulation` 配置 |
+| 仿真角色 | DC/AC/STB/tran/自定义规则、执行后端与站点适配器、轮询/回传/清理策略 | `<project>/private/agents/simulation/` 及 `simulation` 配置 |
 | 分析角色 | 电路专属测量函数与阈值、可选波形操作请求 | `<project>/private/agents/analysis/` 及 `metrics`/`rules` 配置 |
 
 可参照 `private.example/` 的文件形状。四个可选的 `private/**/config/overrides.json` 会在运行时覆盖公用配置；其内容不复制到 run 的 `config.json`，run 只记录这些文件的 SHA-256，配置中途改变会拒绝续跑。示例中的 `pdk.json`、`transfer.json` 等其他私有文件**不会被核心自动读取**，需要用户的网表生成器或站点适配器主动读取。密码只应通过交互提示或操作系统密钥设施取得，不能写入配置、命令参数、运行产物或仓库。若用户工程单独使用 Git，也应忽略其 `private/` 与 `runs/`。
@@ -72,7 +72,7 @@ LSF 用户可以在私有 `overrides.json` 中选择后端，不公开站点细�
 
 复制[适配器模板](private.example/agents/simulation/scripts/site_lsf_adapter.py)，用本站可复用函数实现 `stage`、`submit`、`poll`、`retrieve`、`verify`、`cleanup`。其中 `stage` 要确认仿真 deck 哈希，`submit` 返回真实 job ID，`poll` 区分已提交/RUN/DONE/失败，`retrieve` 给出本地文件及 SHA-256（提供 `remote_sha256` 才能进行两端对照），`verify` 同时核实调度器和仿真器成功并返回解析后的数据。建议以 run ID 作为远端幂等键，避免“已提交但本地交接尚未落盘”时的重试产生重复作业。通用核心会核对状态及本地文件，并在提供远端哈希时进行对照；但不能替未实现的适配器证明登录或传输成功。
 
-无论选哪种后端，用户还需选择 `simulation.rules`（可参考公用 [DC](agents/simulation/config/dc.json)、[AC](agents/simulation/config/ac.json)、[tran](agents/simulation/config/tran.json)）、`save_signals`、仿真模式、超时以及 PSF ASCII 输出。安装环境支持的其他分析可使用 Python 规则渲染器。PDK include 应由项目设计网表/生成器或配置的 include 文件提供，不写进通用引擎。
+无论选哪种后端，用户还需选择 `simulation.rules`（可参考公用 [DC](agents/simulation/config/dc.json)、[AC](agents/simulation/config/ac.json)、[STB](agents/simulation/config/stb.json)、[tran](agents/simulation/config/tran.json)）、`save_signals`、仿真模式、超时以及 PSF ASCII 输出。STB 的探针必须改为电路网表中的真实实例；公用示例只是占位，稳定性裕量的解释仍由项目分析插件负责。安装环境支持的其他分析可使用 Python 规则渲染器。PDK include 应由项目设计网表/生成器或配置的 include 文件提供，不写进通用引擎。
 
 ## 运行与断线续跑
 
@@ -117,6 +117,8 @@ analog-agent campaign status CAMPAIGN_DIR
 `campaign run` 同时最多运行 `max_parallel` 个点，轮询由本地脚本负责，不必让 LLM 逐个盯作业。每个任务完成后即取回、校验、分析；全部任务分析或失败后才生成本轮对比报告，包含参数、指标、判定、失败信息和可选的 Pareto 集。核心**不内置**评分公式、gₘ/Iᴅ 初值、优化算法或统一 spec。`metric_directions` 仅控制可选的 Pareto 方向；下一轮点位和最终选择由用户及分析 AI 决定。
 
 审核后，可用 `campaign add CAMPAIGN_DIR NEXT_POINTS.json --decision "理由" --select POINT_ID` 开启下一轮，或用 `campaign finish CAMPAIGN_DIR --decision "理由" --select POINT_ID` 收尾。用户可在私有配置中指定 `campaign.proposer`（如 `private/agents/analysis/scripts/site_proposer.py:propose`），通过 `campaign propose CAMPAIGN_DIR` 生成候选建议；审核保存的 JSON 后再明确调用 `add`。仓库的[私有提案模板](private.example/agents/analysis/scripts/site_proposer.py)不包含 PDK 方法或自动优化器。
+
+`campaign replay PROJECT.json HISTORY.json` 是公用的离线多轮回放功能；[两轮示例](examples/replay_history.json)可配合 `project.example.json` 运行。历史文件提供每轮已记录的对比结果和决策；核心逐轮校验并在内存中积累不含电路假设的证据。它不要求电路专属知识或 proposer，也不会创建 run 或调用仿真器。若项目配置了私有 proposer，回放可将证据交给它并校验候选。某轮设 `"source": "proposal"` 时，观测参数必须来自该轮提案；人工选择的点可设为 `"manual"`。命令行仅返回检查点 ID 和哈希，不输出私有知识内容。私有经验是否抽为公用脚本或 skill，由主 agent 按[知识公用化流程](agents/analysis/skills/knowledge-promotion/SKILL.md)审核和实现，用户项目不需要提供发布函数。
 
 若聊天因 token 不足而中断，先运行 `campaign doctor CAMPAIGN_DIR` 检查持久化状态，再用 `campaign brief CAMPAIGN_DIR` 获取供 AI 接续的精简摘要；随后 `campaign run` 或 `campaign step` 可脱离旧聊天记录续跑。`campaign pause`/`resume` 暂停或恢复本地调度，不会停止已提交的远端作业。若提交可能已发生但本地没有回执，状态会被标为不确定，**绝不盲目重投**。LSF 私有适配器可选实现 `reconcile(run, config, staged, intent)`，按 run ID 查找真实作业；`analog-agent reconcile RUN_DIR` 接管查证过的回执后，才可用 `campaign retry CAMPAIGN_DIR POINT_ID` 重新启用该步骤。没有查询能力时，须人工核对调度器，不可直接重试。同一轮会冻结公用配置、私有 override 和已声明的模板、规则、插件、include 文件哈希；其他站点依赖可列入 `campaign.dependencies`。应在两轮之间修改电路配置。会话数据放在被忽略的 `<project>/campaigns/`，独立用户工程也应忽略该目录；同一会话必须在相同的 Windows 或 WSL 路径环境中续跑。
 

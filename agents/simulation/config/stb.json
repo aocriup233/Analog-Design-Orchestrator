@@ -1,0 +1,10 @@
+{
+  "kind": "stb",
+  "name": "stb",
+  "options": {
+    "start": "1",
+    "stop": "10G",
+    "dec": 100,
+    "probe": "LOOP_PROBE"
+  }
+}

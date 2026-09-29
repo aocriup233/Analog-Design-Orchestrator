@@ -50,6 +50,34 @@ class SimulationRulesTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Unsafe"):
             render_rule({"kind": "tran", "options": {"stop": "1n\ninclude bad"}})
 
+    def test_stb_rule_is_generic_and_validated(self):
+        shared_example = read_json(Path(__file__).resolve().parents[1] /
+                                   "agents/simulation/config/stb.json")
+        self.assertIn("probe=LOOP_PROBE", render_rule(shared_example))
+        rule = {"kind": "stb", "name": "loop_stability", "options":
+                {"start": "1", "stop": "1G", "dec": 100, "probe": "IPRB"}}
+        self.assertEqual(render_rule(rule),
+                         "loop_stability stb start=1 stop=1G dec=100 probe=IPRB")
+        with self.assertRaisesRegex(ValueError, "STB requires a probe"):
+            render_rule({"kind": "stb", "options": {"start": "1", "stop": "1G", "dec": 100}})
+        with self.assertRaisesRegex(ValueError, "Unsafe"):
+            render_rule({"kind": "stb", "options":
+                         {"start": "1", "stop": "1G", "dec": 100,
+                          "probe": "IPRB\ninclude bad"}})
+
+    def test_stb_rule_builds_separate_deck(self):
+        write_json(self.root / "stb.json", {"kind": "stb", "name": "stb", "options":
+                   {"start": "1", "stop": "1G", "dec": 100, "probe": "IPRB"}})
+        config = read_json(self.project)
+        config["simulation"]["rules"].append("stb.json")
+        write_json(self.project, config)
+        run = create_run(self.project, 0)
+        design = Path(prepare(run)["netlist"])
+        plan = build_deck(design, run_config(run), run)
+        self.assertIn("stb stb start=1 stop=1G dec=100 probe=IPRB",
+                      Path(plan["deck"]).read_text(encoding="utf-8"))
+        self.assertNotIn("stb stb", design.read_text(encoding="utf-8"))
+
     def test_simulation_worker_uses_generated_deck(self):
         run = create_run(self.project, 0)
         design = Path(prepare(run)["netlist"])

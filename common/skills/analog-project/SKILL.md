@@ -9,4 +9,4 @@ Read `AGENTS.md` for the role boundaries. Use `project.json` and `agents/*/confi
 
 Run `common/scripts/inspect_workspace.py PROJECT.json` for a redacted inventory. A run stores a public config snapshot and hashes of private override files; workers refuse a run if those private files change during it. Do not print private config contents in reports.
 
-For simulation rule authoring, use the matching DC, AC, or tran skill under `agents/simulation/skills`. For waveform calculations and plots, use `agents/analysis/skills/waveform-toolkit`.
+For simulation rule authoring, use the matching DC, AC, STB, or tran skill under `agents/simulation/skills`. For waveform calculations and plots, use `agents/analysis/skills/waveform-toolkit`.

@@ -1,0 +1,31 @@
+{
+  "schema": 1,
+  "cycles": [
+    {
+      "source": "manual",
+      "comparison": {
+        "campaign_id": "offline-example",
+        "cycle": "cycle-0001",
+        "points": [
+          {"id": "rc_a", "parameters": {"R": "1k", "C": "50f"},
+           "state": "ANALYZED", "verdict": "FAIL",
+           "metrics": {"gain_1g_db": -4.0}}
+        ]
+      },
+      "decision": {"selected": ["rc_a"], "rationale": "Use the measured baseline for comparison"}
+    },
+    {
+      "source": "manual",
+      "comparison": {
+        "campaign_id": "offline-example",
+        "cycle": "cycle-0002",
+        "points": [
+          {"id": "rc_b", "parameters": {"R": "2k", "C": "50f"},
+           "state": "ANALYZED", "verdict": "PASS",
+           "metrics": {"gain_1g_db": -2.0}}
+        ]
+      },
+      "decision": {"selected": ["rc_b"], "rationale": "Prefer the passing recorded point"}
+    }
+  ]
+}

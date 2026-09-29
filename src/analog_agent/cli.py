@@ -10,6 +10,7 @@ from .analysis_agent import analyze
 from . import campaign as campaign_flow
 from .core import create_run, read_json, run_config
 from .netlist_agent import prepare
+from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
 from .workflow import cleanup, invoke_role, run_auto
 
@@ -64,6 +65,9 @@ def main() -> int:
     campaign_finish.add_argument("campaign", type=Path)
     campaign_finish.add_argument("--decision", required=True)
     campaign_finish.add_argument("--select", action="append", default=[])
+    campaign_replay = actions.add_parser("replay", help="Offline multi-cycle decision replay; no simulation")
+    campaign_replay.add_argument("config", type=Path)
+    campaign_replay.add_argument("history", type=Path)
     worker = sub.add_parser("worker", help=argparse.SUPPRESS)
     worker.add_argument("role", choices=["netlist", "simulation", "analysis"])
     worker.add_argument("run", type=Path)
@@ -143,6 +147,9 @@ def main() -> int:
                                                        args.run, args.reason)
         elif action == "finish":
             output = campaign_flow.finish(args.campaign, args.decision, args.select)
+        elif action == "replay":
+            result = replay_history(args.config, args.history)
+            output = {key: value for key, value in result.items() if key != "final_knowledge"}
         else:
             output = campaign_flow.propose(args.campaign)
     else:

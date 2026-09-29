@@ -31,16 +31,18 @@ def render_rule(rule: dict[str, Any], project_root: Path | None = None) -> str:
         if not statement:
             raise ValueError("Custom analysis rule returned an empty statement")
         return statement
-    if kind not in {"dc", "ac", "tran"}:
+    if kind not in {"dc", "ac", "tran", "stb"}:
         raise ValueError(f"Unsupported analysis kind: {kind}")
-    name = str(rule.get("name", {"dc": "dcOp", "ac": "ac", "tran": "tran"}[kind]))
+    name = str(rule.get("name", {"dc": "dcOp", "ac": "ac", "tran": "tran", "stb": "stb"}[kind]))
     if not _NAME.fullmatch(name):
         raise ValueError(f"Invalid analysis name: {name}")
     options = dict(rule.get("options", {}))
-    if kind == "ac" and not {"start", "stop"} <= options.keys():
-        raise ValueError("AC requires start and stop")
-    if kind == "ac" and not any(key in options for key in ("dec", "lin", "log")):
-        raise ValueError("AC requires dec, lin, or log sweep density")
+    if kind in {"ac", "stb"} and not {"start", "stop"} <= options.keys():
+        raise ValueError(f"{kind.upper()} requires start and stop")
+    if kind in {"ac", "stb"} and not any(key in options for key in ("dec", "lin", "log")):
+        raise ValueError(f"{kind.upper()} requires dec, lin, or log sweep density")
+    if kind == "stb" and not options.get("probe"):
+        raise ValueError("STB requires a probe instance")
     if kind == "tran" and "stop" not in options:
         raise ValueError("Transient analysis requires stop")
     rendered = []
