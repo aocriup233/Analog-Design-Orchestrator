@@ -97,6 +97,29 @@ class CampaignTest(unittest.TestCase):
                                      for index, value in enumerate(values, 1)]})
         return path
 
+    def test_same_parameters_can_target_distinct_testbenches(self):
+        (self.root / "block.scs").write_text(
+            "subckt dut (A B)\nR0 (A B) resistor r=@@R@@\nends dut\n", encoding="utf-8")
+        (self.root / "dc_tb.scs").write_text("X0 (A B) dut\n", encoding="utf-8")
+        (self.root / "ac_tb.scs").write_text("X0 (A B) dut\n", encoding="utf-8")
+        cfg = read_json(self.config)
+        del cfg["template"]
+        cfg["netlist"] = {"block": {"kind": "source", "path": "block.scs",
+                                    "name": "dut", "pins": ["A", "B"]},
+                          "testbenches": {"dc": {"path": "dc_tb.scs"},
+                                          "ac": {"path": "ac_tb.scs"}},
+                          "default_testbench": "dc"}
+        write_json(self.config, cfg)
+        points = self.root / "tb_points.json"
+        write_json(points, {"points": [
+            {"id": "dc", "parameters": {"R": "1k"}, "testbench": "dc"},
+            {"id": "ac", "parameters": {"R": "1k"}, "testbench": "ac"}]})
+        campaign = create_campaign(self.config)
+        add_cycle(campaign, points)
+        selected = read_json(campaign / "campaign.json")["cycles"][0]["points"]
+        self.assertEqual([point["testbench"] for point in selected], ["dc", "ac"])
+        self.assertNotEqual(selected[0]["fingerprint"], selected[1]["fingerprint"])
+
     def test_bounded_parallel_cycle_and_reviewed_next_cycle(self):
         campaign = create_campaign(self.config)
         add_cycle(campaign, self._points(["1k", "2k", "3k"]))

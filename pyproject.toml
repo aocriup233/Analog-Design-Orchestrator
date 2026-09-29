@@ -19,3 +19,6 @@ analog-agent = "analog_agent.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+analog_agent = ["*.mjs"]

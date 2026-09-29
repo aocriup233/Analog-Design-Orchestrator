@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from analog_agent.analysis_agent import analyze
 from analog_agent.core import create_run, read_json, write_json
 from analog_agent.netlist_agent import prepare
+from analog_agent.sim_rules import build_deck
 from analog_agent.simulation_agent import simulate
 from analog_agent.workflow import cleanup
 from analog_agent.state import transition
@@ -123,6 +124,66 @@ class WorkflowTest(unittest.TestCase):
         net = prepare(run)
         self.assertEqual(Path(net["netlist"]).read_text(encoding="utf-8"),
                          "simulator lang=spectre\n")
+
+    def test_one_block_multiple_testbenches(self):
+        (self.root / "block.scs").write_text(
+            "subckt dut (IN OUT VSS)\nR0 (IN OUT) resistor r=@@R@@\nends dut\n",
+            encoding="utf-8")
+        (self.root / "dc_tb.scs").write_text(
+            "VIN (IN 0) vsource dc=0.1\nX0 (IN OUT 0) dut\n", encoding="utf-8")
+        (self.root / "ac_tb.scs").write_text(
+            "VIN (IN 0) vsource dc=0 acmag=1\nX0 (IN OUT 0) dut\n", encoding="utf-8")
+        cfg = read_json(self.config)
+        del cfg["template"]
+        cfg["netlist"] = {
+            "block": {"kind": "source", "path": "block.scs", "name": "dut",
+                      "pins": ["IN", "OUT", "VSS"]},
+            "testbenches": {"dc": {"path": "dc_tb.scs"},
+                            "ac": {"path": "ac_tb.scs"}},
+            "default_testbench": "dc",
+        }
+        write_json(self.root / "dc_rule.json", {"kind": "dc", "name": "dcOp", "options": {}})
+        write_json(self.root / "ac_rule.json", {"kind": "ac", "name": "acSweep",
+                                                  "options": {"start": "1", "stop": "1G", "dec": 10}})
+        cfg["simulation"]["rules_by_testbench"] = {
+            "dc": ["dc_rule.json"], "ac": ["ac_rule.json"]}
+        write_json(self.config, cfg)
+        dc = prepare(create_run(self.config, 0))
+        ac = prepare(create_run(self.config, 0, testbench="ac"))
+        self.assertEqual(dc["block"]["sha256"], ac["block"]["sha256"])
+        self.assertNotEqual(dc["testbench"]["sha256"], ac["testbench"]["sha256"])
+        self.assertIn("acmag=1", Path(ac["netlist"]).read_text(encoding="utf-8"))
+        self.assertEqual(ac["testbench"]["name"], "ac")
+        plan = build_deck(Path(ac["netlist"]), {**cfg, "_project_root": str(self.root)},
+                          Path(ac["netlist"]).parent.parent)
+        self.assertEqual(plan["testbench"], "ac")
+        self.assertIn("acSweep ac", plan["statements"][0])
+        with self.assertRaisesRegex(ValueError, "Unknown testbench"):
+            create_run(self.config, 0, testbench="missing")
+
+    def test_canvas_adapter_requires_explicit_port_contract(self):
+        (self.root / "drawing.icproj.json").write_text("{}", encoding="utf-8")
+        (self.root / "mapping.py").write_text(
+            "def export(config, task, run, values):\n"
+            "    path = run / 'mapped.scs'\n"
+            "    path.write_text('subckt dut (A B)\\nR0 (A B) resistor r=1k\\nends dut\\n', encoding='utf-8')\n"
+            "    return path\n", encoding="utf-8")
+        (self.root / "tb.scs").write_text("X0 (A B) dut\n", encoding="utf-8")
+        cfg = read_json(self.config)
+        del cfg["template"]
+        cfg["netlist"] = {
+            "block": {"kind": "canvas", "project": "drawing.icproj.json",
+                      "adapter": "mapping.py:export", "name": "dut", "pins": ["A", "B"]},
+            "testbenches": {"smoke": {"path": "tb.scs"}},
+            "default_testbench": "smoke",
+        }
+        write_json(self.config, cfg)
+        prepared = prepare(create_run(self.config, 0))
+        self.assertEqual(prepared["block"]["kind"], "canvas")
+        cfg["netlist"]["block"]["pins"] = ["B", "A"]
+        write_json(self.config, cfg)
+        with self.assertRaisesRegex(ValueError, "port order"):
+            prepare(create_run(self.config, 0))
 
 
 if __name__ == "__main__":

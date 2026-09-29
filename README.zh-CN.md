@@ -4,13 +4,13 @@
 
 [English](README.md)
 
-ADO 把电路决策与 EDA 环境操作分开：用户或外部 LLM 控制器提出电路版本，三个独立进程分别准备网表、执行配置好的仿真、测量结果。每一步都在独立的 run 目录留下持久化交接文件与哈希。通用引擎不内置 CTLE 拓扑、工艺库、集群地址或某种电路的专用公式。
+ADO 把电路决策与 EDA 环境操作分开：用户或外部 LLM 控制器提出电路版本，三个独立进程分别准备网表、执行配置好的仿真、测量结果。每一步都在独立的 run 目录留下持久化交接文件与哈希。
 
 为兼容现有工程，Python 包和命令仍叫 `analog-agent`；**ADO 是项目正式名称，不是新的 CLI 命令。**
 
 ## 已实现的能力与边界
 
-- 设计网表 `input.scs` 与仿真 agent 管理的 `simulation.scs` 分离；DC、AC、STB、瞬态分析通过可复用规则文件配置。
+- 可选的复用电路 `block.scs` 与按测量目标选择的 `testbench.scs` 独立保存，合成兼容现有后端的 `input.scs`；仿真角色单独管理 `simulation.scs` 和 DC、AC、STB、瞬态规则。原有单文件模式仍可用。
 - Bridge、本地 Spectre，以及异步 LSF 的**后端接口**。LSF 必须由用户实现私有站点适配器；仓库提供的是接口模板，不是已经连通的集群配置。
 - 持久化状态 `CREATED → NETLIST_READY → STAGED → SUBMITTED → RUN → DONE → RETRIEVED → VERIFIED → ANALYZED`。短作业可能跳过 `RUN`，明确失败进入 `FAILED`。`resume` 每次轮询一次；作业完成后继续取回与校验。
 - 通用波形分窗、重叠、取点、参考线对照、眼图及 FFT；电路专属指标由项目插件提供。
@@ -45,6 +45,26 @@ analog-agent new project.json
 | 网表角色 | 工艺合法器件、引脚顺序、模型 include 和电路专属生成器 | `<project>/private/agents/netlist/` |
 | 仿真角色 | DC/AC/STB/tran/自定义规则、执行后端与站点适配器、轮询/回传/清理策略 | `<project>/private/agents/simulation/` 及 `simulation` 配置 |
 | 分析角色 | 电路专属测量函数与阈值、可选波形操作请求 | `<project>/private/agents/analysis/` 及 `metrics`/`rules` 配置 |
+
+### 可复用 block 与按仿真需求选择的 TB
+
+新工程可用 `netlist.block` 指向 LLM 编写的 Spectre `subckt`（`kind: source`），或用户在本地 Analog Canvas 绘制的 `.icproj.json`（`kind: canvas`）。必须声明 `name` 和有序 `pins`，不能从画布外观猜测端口。`netlist.testbenches` 列出各个独立 TB，`default_testbench` 指定默认项。例如：
+
+```json
+{
+  "netlist": {
+    "block": {"kind": "source", "path": "blocks/dut.scs", "name": "dut", "pins": ["IN", "OUT", "VSS"]},
+    "testbenches": {"dc": {"path": "tb/dc.scs"}, "ac": {"path": "tb/ac.scs"}},
+    "default_testbench": "dc"
+  }
+}
+```
+
+TB 负责实例化 block、激励和负载；DC/AC/STB/tran 分析语句仍由仿真角色依据 `simulation.rules` 写入。可选的 `simulation.rules_by_testbench` 将 TB 名称映射到不同规则文件列表，例如 `{"dc": ["rules/dc.json"], "ac": ["rules/ac.json"]}`。执行 `analog-agent new project.json --testbench ac` 可选择 AC TB 及对应规则组。campaign 的每个 point 也可写 `"testbench": "ac"`；参数相同但 TB 不同的点视为不同任务。网表角色独立保存 `block.scs`、`testbench.scs` 及哈希，再合成给现有仿真后端的 `input.scs`。修改已交接内容须新建 run。
+
+Canvas block 使用 `project` 代替 `path`，并配置 `canvas_root`（本地已构建的 Analog Canvas，器件/模型绑定须在画布中明确完成），或私有工艺映射函数，例如 `"adapter": "private/agents/netlist/scripts/map_canvas.py:export"`。函数接收 `(config, task, run, values)`，返回生成的 Spectre block 文件路径。额外映射或模型输入列入 `netlist.block.dependencies`，使 campaign 冻结文件哈希。Canvas 导出与端口检查仅验证结构，工艺映射和电气结果仍需用户审查；公用框架不含某种 PDK 或电路目标。
+
+该能力在 `new` 或 campaign point 的 `CREATED`→`NETLIST_READY` 网表阶段触发。既有的离线多轮回访位于 campaign 的决策验证阶段，命令为 `analog-agent campaign replay PROJECT.json HISTORY.json`；它只读取记录的提案、比较和决策，不生成 block/TB、不创建 run，也不启动仿真。因此回访用于检验决策闭环，不代替电气验证。
 
 可参照 `private.example/` 的文件形状。四个可选的 `private/**/config/overrides.json` 会在运行时覆盖公用配置；其内容不复制到 run 的 `config.json`，run 只记录这些文件的 SHA-256，配置中途改变会拒绝续跑。示例中的 `pdk.json`、`transfer.json` 等其他私有文件**不会被核心自动读取**，需要用户的网表生成器或站点适配器主动读取。密码只应通过交互提示或操作系统密钥设施取得，不能写入配置、命令参数、运行产物或仓库。若用户工程单独使用 Git，也应忽略其 `private/` 与 `runs/`。
 

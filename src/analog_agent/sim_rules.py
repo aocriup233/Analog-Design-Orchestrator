@@ -57,7 +57,8 @@ def build_deck(design: Path, config: dict[str, Any], run: Path) -> dict[str, Any
     """Create a simulator-owned deck; leave the authored design untouched."""
     root = Path(config["_project_root"])
     simulation = config.get("simulation", {})
-    paths = simulation.get("rules", [])
+    selected = read_json(run / "task.json").get("testbench") or config.get("netlist", {}).get("default_testbench")
+    paths = simulation.get("rules_by_testbench", {}).get(selected, simulation.get("rules", []))
     if not paths:
         raise ValueError("simulation.rules is empty")
     rules = []
@@ -84,6 +85,7 @@ def build_deck(design: Path, config: dict[str, Any], run: Path) -> dict[str, Any
     ]), encoding="utf-8")
     manifest = {"deck": str(deck), "deck_sha256": sha256(deck),
                 "design_sha256": sha256(design), "rules": rules,
-                "statements": statements, "save_signals": signals}
+                "statements": statements, "save_signals": signals,
+                "testbench": selected}
     write_json(run / "simulation_plan.json", manifest)
     return manifest

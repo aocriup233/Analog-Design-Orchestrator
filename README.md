@@ -4,13 +4,13 @@
 
 [简体中文](README.zh-CN.md)
 
-ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory. The reusable engine contains no CTLE topology, foundry PDK, cluster address, or circuit-specific performance formula.
+ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory.
 
 The Python distribution and CLI remain named `analog-agent` for compatibility. **ADO is the project name, not a new CLI command.**
 
 ## What is implemented
 
-- Separate design `input.scs` and simulator-owned `simulation.scs`, with reusable DC, AC, STB, and transient rule files.
+- Optional reusable `block.scs` plus goal-specific `testbench.scs`, composed into design `input.scs`; simulator-owned `simulation.scs` remains separate, with reusable DC, AC, STB, and transient rule files. Legacy single-file input remains supported.
 - Bridge, local Spectre, and asynchronous LSF *backend interfaces*. LSF requires a working private site adapter; the supplied adapter is a template, not a configured cluster connection.
 - Durable `CREATED → NETLIST_READY → STAGED → SUBMITTED → RUN → DONE → RETRIEVED → VERIFIED → ANALYZED` transitions. A short job may skip `RUN`; a reported failure enters `FAILED`. `resume` makes one poll and continues retrieval and verification when the scheduler reports `DONE`.
 - Generic waveform windows, overlays, samples, reference comparisons, eye diagrams, and FFTs; project plugins provide circuit-specific metrics.
@@ -45,6 +45,26 @@ The command prints the new `runs/<run_id>` path. Do not run `submit` until the c
 | Netlist role | PDK-valid devices, pin order, includes, and any circuit-specific generator | `<project>/private/agents/netlist/` |
 | Simulation role | DC/AC/STB/tran/custom rule JSON, execution backend and site adapter, polling/retrieval/cleanup behavior | `<project>/private/agents/simulation/` and `simulation` config |
 | Analysis role | Circuit-specific measurement functions and thresholds; optional waveform requests | `<project>/private/agents/analysis/` and `metrics`/`rules` config |
+
+### Reusable blocks and measurement-specific testbenches
+
+For a new project, `netlist.block` can point to an LLM-authored Spectre `subckt` (`kind: source`) or to a local Analog Canvas `.icproj.json` (`kind: canvas`). Explicit `name` and ordered `pins` are mandatory. `netlist.testbenches` names independent TB sources or project-local generators; `default_testbench` is required. For example:
+
+```json
+{
+  "netlist": {
+    "block": {"kind": "source", "path": "blocks/dut.scs", "name": "dut", "pins": ["IN", "OUT", "VSS"]},
+    "testbenches": {"dc": {"path": "tb/dc.scs"}, "ac": {"path": "tb/ac.scs"}},
+    "default_testbench": "dc"
+  }
+}
+```
+
+The TB supplies stimuli, loads and one block instance; the simulation role still owns analysis statements through `simulation.rules`. Optional `simulation.rules_by_testbench` maps a TB name to its own rule-file list, for example `{"dc": ["rules/dc.json"], "ac": ["rules/ac.json"]}`. Run `analog-agent new project.json --testbench ac` to select that TB and rule set. In a campaign points file, each point may select `"testbench": "ac"`; equal parameter values with different TBs remain distinct points. The worker stores `block.scs`, `testbench.scs`, their hashes, and a composed `input.scs` for existing simulators. Editing any prepared artifact requires a new run.
+
+For a Canvas block, set `project` instead of `path` and either `canvas_root` (a local built Analog Canvas checkout with explicit, reviewed device/model bindings) or a private mapping function such as `"adapter": "private/agents/netlist/scripts/map_canvas.py:export"`. The adapter receives `(config, task, run, values)` and returns a Spectre block-file path. Declare its extra mapping/model inputs in `netlist.block.dependencies` so campaigns freeze their hashes. Canvas export and interface checking are structural only: a user must review PDK mapping and simulation results. No PDK mapping or circuit-specific objective is built into ADO.
+
+The netlist stage is `new` or the `CREATED` campaign point. Offline multi-cycle replay is a separate decision-stage command, `analog-agent campaign replay PROJECT.json HISTORY.json`: it checks recorded proposals, comparisons and decisions without preparing a block/TB, creating runs or launching simulation. It is a rehearsal of campaign reasoning, not a substitute for electrical verification.
 
 Start with `private.example/` for file shapes. Four optional `private/**/config/overrides.json` files are merged into the public project configuration at runtime. Their contents are not copied into `runs/<run_id>/config.json`; the run records their SHA-256 hashes and refuses to continue if they change mid-run. Other private files, including example `pdk.json` and `transfer.json`, are **not read automatically**: the user's generator or site adapter must load them. Keep credentials in an interactive prompt or an operating-system secret facility, never in configuration, command arguments, artifacts, or the repository. If the user project has its own Git repository, ignore its `private/` and `runs/` directories there too.
 

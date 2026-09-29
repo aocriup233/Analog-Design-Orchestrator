@@ -56,10 +56,23 @@ def _declared_inputs(cfg: dict) -> dict[str, str]:
     names = set()
     if cfg.get("template"):
         names.add(cfg["template"])
+    netlist = cfg.get("netlist", {})
+    block = netlist.get("block", {})
+    for key in ("path", "project"):
+        if block.get(key):
+            names.add(block[key])
+    names.update(block.get("dependencies", []))
+    for bench in netlist.get("testbenches", {}).values():
+        if bench.get("path"):
+            names.add(bench["path"])
     simulation = cfg.get("simulation", {})
     names.update(simulation.get("rules", []))
+    for paths in simulation.get("rules_by_testbench", {}).values():
+        names.update(paths)
     names.update(simulation.get("include_files", []))
     for specification in (cfg.get("netlist", {}).get("generator"),
+                          block.get("adapter"),
+                          *(bench.get("generator") for bench in netlist.get("testbenches", {}).values()),
                           simulation.get("adapter"),
                           cfg.get("campaign", {}).get("proposer"),
                           *(definition.get("function") for definition in cfg.get("metrics", {}).values())):
@@ -67,7 +80,10 @@ def _declared_inputs(cfg: dict) -> dict[str, str]:
             location = specification.rsplit(":", 1)[0]
             if location.endswith(".py"):
                 names.add(location)
-    for rule in simulation.get("rules", []):
+    all_rules = set(simulation.get("rules", []))
+    for paths in simulation.get("rules_by_testbench", {}).values():
+        all_rules.update(paths)
+    for rule in all_rules:
         definition = read_json(local_path(root, rule))
         specification = definition.get("function")
         if isinstance(specification, str) and ":" in specification:
@@ -172,7 +188,13 @@ def _validate_points(manifest: dict, payload: dict, cfg: dict) -> list[dict]:
             if "\n" in value or "\r" in value or "@" in value:
                 raise ValueError(f"Unsafe value for {name} in {point_id}")
             values[name] = value
-        fingerprint = hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
+        testbench = point.get("testbench")
+        benches = cfg.get("netlist", {}).get("testbenches", {})
+        if testbench is not None and testbench not in benches:
+            raise ValueError(f"Unknown testbench in {point_id}: {testbench}")
+        selected_bench = testbench or cfg.get("netlist", {}).get("default_testbench")
+        fingerprint = hashlib.sha256(json.dumps(
+            {"parameters": values, "testbench": selected_bench}, sort_keys=True).encode()).hexdigest()
         if fingerprint in seen:
             raise ValueError(f"Duplicate parameter point: {point_id}")
         seen.add(fingerprint)
@@ -180,6 +202,7 @@ def _validate_points(manifest: dict, payload: dict, cfg: dict) -> list[dict]:
         if not isinstance(rationale, str):
             raise ValueError("Point rationale must be text")
         validated.append({"id": point_id, "parameters": values,
+                          "testbench": selected_bench,
                           "rationale": rationale, "fingerprint": fingerprint,
                           "run": None, "error": None})
     return validated
@@ -272,6 +295,8 @@ def attach_verified_run(campaign: Path, point_id: str, run: Path, reason: str) -
             "design_sha256": net["netlist_sha256"]}
         if task.get("overrides") != point["parameters"] or net.get("parameters") != point["parameters"]:
             raise ValueError("Run parameter point differs")
+        if task.get("testbench") != point.get("testbench"):
+            raise ValueError("Run testbench differs")
         if (sha256(Path(net["netlist"])) != net["netlist_sha256"] or
                 sha256(Path(plan["deck"])) != plan["deck_sha256"] or
                 plan["design_sha256"] != net["netlist_sha256"]):
@@ -359,6 +384,7 @@ def _comparison(campaign: Path, manifest: dict, cycle: dict) -> dict:
     rows = []
     for point in cycle["points"]:
         row = {"id": point["id"], "parameters": point["parameters"],
+               "testbench": point.get("testbench"),
                "rationale": point["rationale"], "run": point["run"],
                "state": _point_state(point)}
         run = Path(point["run"])
@@ -430,7 +456,8 @@ def step(campaign: Path) -> dict:
             selected = candidates[:slots]
             for point in selected:
                 if not point["run"]:
-                    run = create_run(Path(manifest["project_config"]), 0, point["parameters"])
+                    run = create_run(Path(manifest["project_config"]), 0,
+                                     point["parameters"], point.get("testbench"))
                     point["run"] = str(run)
                     _save(campaign, manifest)
             _dispatch(selected, parallel)

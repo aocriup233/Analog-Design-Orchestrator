@@ -22,6 +22,7 @@ def main() -> int:
     new.add_argument("config", type=Path)
     new.add_argument("--iteration", type=int, default=0)
     new.add_argument("--set", action="append", default=[], metavar="NAME=VALUE")
+    new.add_argument("--testbench", help="Select one declared block-mode testbench")
     submit = sub.add_parser("submit", help="Submit one prepared run")
     submit.add_argument("run", type=Path)
     resumed = sub.add_parser("resume", help="Poll and resume an asynchronous simulation")
@@ -74,7 +75,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "new":
         overrides = dict(item.split("=", 1) for item in args.set)
-        run = create_run(args.config, args.iteration, overrides)
+        run = create_run(args.config, args.iteration, overrides, args.testbench)
         invoke_role("netlist", run)
         output = {"run": str(run), "netlist": read_json(run / "netlist_result.json")}
     elif args.command in {"submit", "resume"}:
