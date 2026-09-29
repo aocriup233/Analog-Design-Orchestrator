@@ -4,7 +4,7 @@
 
 [简体中文](README.zh-CN.md)
 
-ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory. The reusable engine contains no CTLE topology, foundry PDK, cluster address, or circuit-specific performance formula.
+ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory. 
 
 The Python distribution and CLI remain named `analog-agent` for compatibility. **ADO is the project name, not a new CLI command.**
 
