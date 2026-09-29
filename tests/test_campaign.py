@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from analog_agent.campaign import (add_cycle, attach_verified_run, brief, create_campaign, finish, inspect_campaign,
-                                   pause, propose, resume, retry, step)
+                                   pause, propose, resume, retire, retry, step)
 from analog_agent.core import read_json, write_json
 from analog_agent.simulation_agent import reconcile_submission
 from analog_agent.state import status as run_status, transition
@@ -281,6 +281,56 @@ class CampaignTest(unittest.TestCase):
         self.assertEqual(second["cycles"][0]["counts"], {"ANALYZED": 1, "STAGED": 1})
         verified_external_run(1, 2.0)
         self.assertEqual(step(campaign)["status"], "REVIEW")
+
+    def test_doctor_resolves_foreign_environment_paths_without_rewriting_evidence(self):
+        campaign = create_campaign(self.config)
+        add_cycle(campaign, self._points(["1k"]))
+        for _ in range(3):
+            step(campaign)
+        manifest = read_json(campaign / "campaign.json")
+        run = Path(manifest["cycles"][0]["points"][0]["run"])
+        foreign_root = f"/mnt/e/{self.root.name}"
+        manifest["project_config"] = f"{foreign_root}/project.json"
+        manifest["cycles"][0]["points"][0]["run"] = f"{foreign_root}/runs/{run.name}"
+        manifest["path_environment"] = "posix" if os.name == "nt" else "nt"
+        write_json(campaign / "campaign.json", manifest)
+        snapshot = read_json(run / "config.json")
+        snapshot["_project_root"] = foreign_root
+        snapshot["_config_path"] = f"{foreign_root}/project.json"
+        write_json(run / "config.json", snapshot)
+        net = read_json(run / "netlist_result.json")
+        net["netlist"] = (f"{foreign_root}/runs/{run.name}/"
+                          f"{Path(net['netlist']).relative_to(run).as_posix()}")
+        write_json(run / "netlist_result.json", net)
+        doctor = inspect_campaign(campaign)
+        self.assertEqual(doctor["cycles"][0]["counts"], {"ANALYZED": 1})
+        self.assertIsNone(doctor["cycles"][0]["points"][0]["issue"])
+        self.assertIn("path_note", doctor)
+        self.assertEqual(read_json(campaign / "campaign.json")["project_config"],
+                         f"{foreign_root}/project.json")
+        self.assertEqual(step(campaign)["status"], "REVIEW")
+        add_cycle(campaign, self._points(["2k"]), decision="Continue in the local environment")
+        self.assertEqual(read_json(campaign / "campaign.json")["path_environment"], os.name)
+        self.assertEqual(step(campaign)["cycles"][-1]["counts"], {"SUBMITTED": 1})
+
+    def test_retire_preserves_manifest_and_refuses_inflight_submission(self):
+        empty = create_campaign(self.config)
+        report = retire(empty, "Unused draft")
+        self.assertEqual(report["status"], "RETIRED")
+        saved = read_json(empty / "campaign.json")
+        backup = empty / saved["retirement"]["backup"]
+        self.assertEqual(read_json(backup)["status"], "AWAITING_POINTS")
+        self.assertEqual(inspect_campaign(empty)["next_action"], "none")
+        with self.assertRaisesRegex(ValueError, "Pause active work"):
+            retire(empty, "Again")
+
+        active = create_campaign(self.config)
+        add_cycle(active, self._points(["1k"]))
+        step(active)
+        pause(active)
+        with self.assertRaisesRegex(ValueError, "still needs reconciliation"):
+            retire(active, "Would hide an active job")
+        self.assertEqual(inspect_campaign(active)["status"], "PAUSED")
 
 
 if __name__ == "__main__":

@@ -11,12 +11,13 @@ import hashlib
 import json
 import math
 import os
+import shutil
 import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from contextlib import contextmanager
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .core import (create_run, load_config, local_path, private_manifest, read_json,
@@ -134,6 +135,59 @@ def _manifest(campaign: Path) -> dict:
     return read_json(campaign.resolve() / "campaign.json")
 
 
+def _stored_path_parts(value: str) -> tuple[str, ...]:
+    """Parse persisted Windows or POSIX paths without using the host OS parser."""
+    if not isinstance(value, str) or not value or ".." in value.replace("\\", "/").split("/"):
+        raise ValueError("Unsafe persisted project path")
+    return PurePosixPath(value.replace("\\", "/")).parts
+
+
+def _project_config_path(campaign: Path, manifest: dict) -> Path:
+    root = campaign.resolve().parent.parent
+    parts = _stored_path_parts(manifest["project_config"])
+    if len(parts) < 2 or parts[-2].casefold() != root.name.casefold():
+        raise ValueError("Persisted project config is not in this project root")
+    path = local_path(root, parts[-1])
+    if not path.is_file():
+        raise FileNotFoundError(path)
+    return path
+
+
+def _run_path(campaign: Path, value: str) -> Path:
+    root = campaign.resolve().parent.parent
+    parts = _stored_path_parts(value)
+    if (len(parts) < 3 or parts[-3].casefold() != root.name.casefold()
+            or parts[-2] != "runs"):
+        raise ValueError("Persisted run is not in this project's runs directory")
+    return local_path(root, f"runs/{parts[-1]}")
+
+
+def _run_artifact_path(run: Path, value: str) -> Path:
+    parts = _stored_path_parts(value)
+    root = run.resolve().parent.parent
+    anchor = (root.name.casefold(), "runs", run.name)
+    matches = [index for index in range(len(parts) - 2)
+               if (parts[index].casefold(), parts[index + 1], parts[index + 2]) == anchor]
+    if not matches:
+        raise ValueError("Persisted artifact is not inside this run")
+    suffix = parts[matches[-1] + 3:]
+    if not suffix:
+        raise ValueError("Persisted artifact has no file name")
+    return local_path(run, "/".join(suffix))
+
+
+def _campaign_artifact_path(campaign: Path, value: str) -> Path:
+    parts = _stored_path_parts(value)
+    campaign = campaign.resolve()
+    root = campaign.parent.parent
+    anchor = (root.name.casefold(), "campaigns", campaign.name)
+    matches = [index for index in range(len(parts) - 2)
+               if (parts[index].casefold(), parts[index + 1], parts[index + 2]) == anchor]
+    if not matches or len(parts) == matches[-1] + 3:
+        raise ValueError("Persisted artifact is not inside this campaign")
+    return local_path(campaign, "/".join(parts[matches[-1] + 3:]))
+
+
 def _save(campaign: Path, manifest: dict) -> None:
     manifest["updated_at"] = utc_now()
     write_json(campaign / "campaign.json", manifest)
@@ -221,9 +275,8 @@ def add_cycle(campaign: Path, points_path: Path, *, decision: str = "",
         manifest = _manifest(campaign)
         if manifest["status"] not in {"AWAITING_POINTS", "REVIEW"}:
             raise ValueError("A cycle may be added only before the first cycle or after review")
-        if os.name != manifest["path_environment"]:
-            raise ValueError("Resume the campaign in the same path environment")
-        cfg = load_config(Path(manifest["project_config"]))
+        config_path = _project_config_path(campaign, manifest)
+        cfg = load_config(config_path)
         cycle_directions = _policy(cfg)["metric_directions"]
         payload = read_json(points_path)
         points = _validate_points(manifest, payload, cfg)
@@ -240,7 +293,7 @@ def add_cycle(campaign: Path, points_path: Path, *, decision: str = "",
         cycle = {"id": f"cycle-{number:04d}", "status": "ACTIVE",
                  "created_at": utc_now(), "source": str(points_path),
                  "source_sha256": sha256(points_path),
-                 "config_sha256": sha256(Path(manifest["project_config"])),
+                 "config_sha256": sha256(config_path),
                  "private_manifest": private_manifest(Path(cfg["_project_root"])),
                  "declared_inputs": _declared_inputs(cfg),
                  "metric_directions": cycle_directions,
@@ -251,6 +304,10 @@ def add_cycle(campaign: Path, points_path: Path, *, decision: str = "",
             cycle["memory_snapshot"] = str(snapshot)
             cycle["memory_snapshot_sha256"] = sha256(snapshot)
         manifest["cycles"].append(cycle)
+        # Crossing environments is safe at a decision boundary: the new cycle
+        # has no running jobs, and new runs will be created in this environment.
+        manifest["path_environment"] = os.name
+        manifest["project_config"] = str(config_path)
         manifest["status"] = "ACTIVE"
         _save(campaign, manifest)
         return {"campaign": str(campaign), "cycle": cycle["id"],
@@ -272,7 +329,7 @@ def attach_verified_run(campaign: Path, point_id: str, run: Path, reason: str) -
         if manifest["status"] != "ACTIVE":
             raise ValueError("Attach is allowed only before executing an active cycle")
         cycle = manifest["cycles"][-1]
-        issue = _cycle_input_issue(manifest, cycle)
+        issue = _cycle_input_issue(campaign, manifest, cycle)
         if issue:
             raise ValueError(f"Cannot attach while cycle inputs differ: {issue}")
         if any(item["run"] and not item.get("attached") for item in cycle["points"]):
@@ -282,17 +339,18 @@ def attach_verified_run(campaign: Path, point_id: str, run: Path, reason: str) -
             raise ValueError("Unknown campaign point")
         if point["run"]:
             raise ValueError("Campaign point already has a run")
-        root = Path(manifest["project_config"]).parent.resolve()
+        config_path = _project_config_path(campaign, manifest)
+        root = config_path.parent
         if not run.is_relative_to(root / "runs"):
             raise ValueError("Run is outside this project's runs directory")
         if run_status(run) != "VERIFIED" or (run / "analysis_result.json").exists():
             raise ValueError("Only a verified, not-yet-analyzed run may be attached")
         run_cfg = run_config(run)
-        project_cfg = load_config(Path(manifest["project_config"]))
-        if read_json(run / "config.json") != {
-                **read_json(Path(manifest["project_config"])),
-                "_project_root": str(root),
-                "_config_path": str(Path(manifest["project_config"]).resolve())}:
+        project_cfg = load_config(config_path)
+        public = read_json(run / "config.json")
+        public.pop("_project_root", None)
+        public.pop("_config_path", None)
+        if public != read_json(config_path):
             raise ValueError("Run public configuration differs from this campaign")
         if (private_manifest(root) != cycle["private_manifest"] or
                 run_cfg["parameters"] != project_cfg["parameters"]):
@@ -307,8 +365,8 @@ def attach_verified_run(campaign: Path, point_id: str, run: Path, reason: str) -
             raise ValueError("Run parameter point differs")
         if task.get("testbench") != point.get("testbench"):
             raise ValueError("Run testbench differs")
-        if (sha256(Path(net["netlist"])) != net["netlist_sha256"] or
-                sha256(Path(plan["deck"])) != plan["deck_sha256"] or
+        if (sha256(_run_artifact_path(run, net["netlist"])) != net["netlist_sha256"] or
+                sha256(_run_artifact_path(run, plan["deck"])) != plan["deck_sha256"] or
                 plan["design_sha256"] != net["netlist_sha256"]):
             raise ValueError("Run netlist or deck handoff differs")
         if (not (run / "submission_result.json").is_file() or
@@ -320,13 +378,13 @@ def attach_verified_run(campaign: Path, point_id: str, run: Path, reason: str) -
     return inspect_campaign(campaign)
 
 
-def _point_state(point: dict) -> str:
-    return run_status(Path(point["run"])) if point["run"] else "QUEUED"
+def _point_state(campaign: Path, point: dict) -> str:
+    return run_status(_run_path(campaign, point["run"])) if point["run"] else "QUEUED"
 
 
-def _cycle_input_issue(manifest: dict, cycle: dict) -> str | None:
+def _cycle_input_issue(campaign: Path, manifest: dict, cycle: dict) -> str | None:
     try:
-        config_path = Path(manifest["project_config"])
+        config_path = _project_config_path(campaign, manifest)
         cfg = load_config(config_path)
         if (sha256(config_path) != cycle["config_sha256"] or
                 private_manifest(config_path.parent) != cycle["private_manifest"] or
@@ -355,12 +413,12 @@ def _advance(run: Path) -> str:
     return current
 
 
-def _dispatch(points: list[dict], max_workers: int) -> list[tuple[dict, str | None]]:
+def _dispatch(campaign: Path, points: list[dict], max_workers: int) -> list[tuple[dict, str | None]]:
     results = []
     if not points:
         return results
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        pending = {executor.submit(_advance, Path(point["run"])): point for point in points}
+        pending = {executor.submit(_advance, _run_path(campaign, point["run"])): point for point in points}
         for future in as_completed(pending):
             point = pending[future]
             try:
@@ -396,8 +454,8 @@ def _comparison(campaign: Path, manifest: dict, cycle: dict) -> dict:
         row = {"id": point["id"], "parameters": point["parameters"],
                "testbench": point.get("testbench"),
                "rationale": point["rationale"], "run": point["run"],
-               "state": _point_state(point)}
-        run = Path(point["run"])
+               "state": _point_state(campaign, point)}
+        run = _run_path(campaign, point["run"])
         analysis = run / "analysis_result.json"
         simulation = run / "simulation_result.json"
         if analysis.is_file():
@@ -426,14 +484,14 @@ def step(campaign: Path) -> dict:
     campaign = campaign.resolve()
     with _lock(campaign):
         manifest = _manifest(campaign)
-        if os.name != manifest["path_environment"]:
-            raise ValueError("Resume the campaign in the same path environment")
         if manifest["status"] not in {"ACTIVE", "AWAITING_EXECUTION", "NEEDS_ATTENTION"}:
             return inspect_campaign(campaign)
+        if os.name != manifest["path_environment"]:
+            raise ValueError("An in-flight cycle must finish in its original path environment; start the next cycle here")
         cycle = manifest["cycles"][-1]
-        input_issue = _cycle_input_issue(manifest, cycle)
+        input_issue = _cycle_input_issue(campaign, manifest, cycle)
         try:
-            external = (load_config(Path(manifest["project_config"]))
+            external = (load_config(_project_config_path(campaign, manifest))
                         .get("simulation", {}).get("backend") == "external")
         except Exception:
             external = False  # input_issue already records the validation failure
@@ -449,35 +507,35 @@ def step(campaign: Path) -> dict:
         # First poll/retrieve/analyze existing work. New submissions use slots freed here.
         if not input_issue:
             active = [point for point in points if point["run"] and not point["error"]
-                      and _point_state(point) in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"}]
-            _dispatch(active, parallel)
+                       and _point_state(campaign, point) in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"}]
+            _dispatch(campaign, active, parallel)
             _save(campaign, manifest)
         if (manifest["status"] == "ACTIVE" and not cycle.get("issue")
                 and not any(point["error"] for point in points)):
             occupied_states = ({"STAGED", "SUBMITTED", "RUN", "DONE", "RETRIEVED"}
                                if external else {"SUBMITTED", "RUN"})
-            occupied = sum(_point_state(point) in occupied_states for point in points
+            occupied = sum(_point_state(campaign, point) in occupied_states for point in points
                            if point["run"])
             slots = max(0, parallel - occupied)
             candidates = [point for point in points if not point["error"] and
-                          _point_state(point) in ({"QUEUED", "CREATED", "NETLIST_READY"}
+                           _point_state(campaign, point) in ({"QUEUED", "CREATED", "NETLIST_READY"}
                                                    if external else
                                                    {"QUEUED", "CREATED", "NETLIST_READY", "STAGED"})]
             selected = candidates[:slots]
             for point in selected:
                 if not point["run"]:
-                    run = create_run(Path(manifest["project_config"]), 0,
+                    run = create_run(_project_config_path(campaign, manifest), 0,
                                      point["parameters"], point.get("testbench"))
                     point["run"] = str(run)
                     _save(campaign, manifest)
-            _dispatch(selected, parallel)
+            _dispatch(campaign, selected, parallel)
             _save(campaign, manifest)
         if cycle.get("issue") or any(point["error"] for point in points):
             cycle["status"] = manifest["status"] = "NEEDS_ATTENTION"
-        elif all(point["run"] and _point_state(point) in TERMINAL for point in points):
+        elif all(point["run"] and _point_state(campaign, point) in TERMINAL for point in points):
             _comparison(campaign, manifest, cycle)
             cycle["status"] = manifest["status"] = "REVIEW"
-        elif external and any(point["run"] and _point_state(point) in
+        elif external and any(point["run"] and _point_state(campaign, point) in
                               {"STAGED", "SUBMITTED", "RUN", "DONE", "RETRIEVED"}
                               for point in points):
             cycle["status"] = manifest["status"] = "AWAITING_EXECUTION"
@@ -496,19 +554,19 @@ def inspect_campaign(campaign: Path) -> dict:
             state = "QUEUED"
             issue = point.get("error")
             if point["run"]:
-                run = Path(point["run"])
+                run = _run_path(campaign, point["run"])
                 try:
                     state = run_status(run)
                     run_config(run)  # checks private override hashes and current paths
                     net = run / "netlist_result.json"
                     if net.is_file():
                         result = read_json(net)
-                        if sha256(Path(result["netlist"])) != result["netlist_sha256"]:
+                        if sha256(_run_artifact_path(run, result["netlist"])) != result["netlist_sha256"]:
                             issue = "Netlist hash mismatch"
                     plan = run / "simulation_plan.json"
                     if plan.is_file():
                         result = read_json(plan)
-                        if sha256(Path(result["deck"])) != result["deck_sha256"]:
+                        if sha256(_run_artifact_path(run, result["deck"])) != result["deck_sha256"]:
                             issue = "Simulation deck hash mismatch"
                     if (state == "STAGED" and (run / "submission_intent.json").is_file()
                             and not (run / "submission_result.json").is_file()):
@@ -519,7 +577,7 @@ def inspect_campaign(campaign: Path) -> dict:
                     retrieval = run / "retrieval_result.json"
                     if retrieval.is_file() and not read_json(run / "task.json").get("raw_cleaned"):
                         for artifact in read_json(retrieval).get("backend_data", {}).get("artifacts", []):
-                            artifact_path = Path(artifact["path"]).resolve(strict=True)
+                            artifact_path = _run_artifact_path(run, artifact["path"]).resolve(strict=True)
                             if not artifact_path.is_relative_to(run.resolve()) or sha256(artifact_path) != artifact["sha256"]:
                                 issue = "Retrieved artifact hash mismatch"
                     if state in {"VERIFIED", "ANALYZED"} and not (run / "simulation_result.json").is_file():
@@ -532,7 +590,7 @@ def inspect_campaign(campaign: Path) -> dict:
                            "issue": issue, "parameters": point["parameters"]})
         counts = {state: sum(point["state"] == state for point in points)
                   for state in sorted({point["state"] for point in points})}
-        current_issue = (_cycle_input_issue(manifest, cycle)
+        current_issue = (_cycle_input_issue(campaign, manifest, cycle)
                          if cycle is manifest["cycles"][-1] and manifest["status"] in
                          {"ACTIVE", "AWAITING_EXECUTION", "NEEDS_ATTENTION"} else None)
         cycles.append({"id": cycle["id"], "status": cycle["status"],
@@ -540,13 +598,19 @@ def inspect_campaign(campaign: Path) -> dict:
                        "counts": counts, "points": points,
                        "comparison": str(campaign / f"{cycle['id']}_comparison.json")
                        if (campaign / f"{cycle['id']}_comparison.json").is_file() else None})
-    return {"campaign": str(campaign), "status": manifest["status"],
+    report = {"campaign": str(campaign), "status": manifest["status"],
             "policy": manifest["policy"], "cycles": cycles,
             "next_action": {"ACTIVE": "step or run", "PAUSED": "resume",
                             "AWAITING_EXECUTION": "site simulation worker verifies staged runs, then step",
                             "NEEDS_ATTENTION": "drain existing jobs, inspect issues, then retry safe points",
                             "REVIEW": "review comparison, then add next cycle or finish",
-                            "AWAITING_POINTS": "add points", "CLOSED": "none"}[manifest["status"]]}
+                             "AWAITING_POINTS": "add points", "CLOSED": "none",
+                             "RETIRED": "none"}[manifest["status"]]}
+    if manifest.get("retirement"):
+        report["retirement"] = manifest["retirement"]
+    if manifest["status"] not in {"CLOSED", "RETIRED"} and cycles and manifest.get("path_environment") != os.name:
+        report["path_note"] = "Run paths were resolved for inspection; execute an in-flight cycle in its original path environment"
+    return report
 
 
 def brief(campaign: Path) -> dict:
@@ -561,7 +625,7 @@ def brief(campaign: Path) -> dict:
               "next_action": health["next_action"], "policy": manifest["policy"],
               "decision_history": history, "current_cycle": latest}
     if manifest["cycles"] and manifest["cycles"][-1].get("memory_snapshot"):
-        snapshot = Path(manifest["cycles"][-1]["memory_snapshot"])
+        snapshot = _campaign_artifact_path(campaign, manifest["cycles"][-1]["memory_snapshot"])
         if sha256(snapshot) != manifest["cycles"][-1]["memory_snapshot_sha256"]:
             raise ValueError("Frozen campaign memory snapshot changed")
         packet["memory"] = memory_brief_view(read_json(snapshot))
@@ -615,6 +679,8 @@ def resume(campaign: Path) -> dict:
         manifest = _manifest(campaign)
         if manifest["status"] != "PAUSED":
             raise ValueError("Only a paused campaign can be resumed")
+        if manifest["path_environment"] != os.name:
+            raise ValueError("Resume the in-flight cycle in its original path environment")
         manifest["status"] = "ACTIVE"
         _save(campaign, manifest)
     return inspect_campaign(campaign)
@@ -626,11 +692,13 @@ def retry(campaign: Path, point_id: str) -> dict:
         manifest = _manifest(campaign)
         if manifest["status"] != "NEEDS_ATTENTION":
             raise ValueError("Retry is only available after a worker error")
+        if manifest["path_environment"] != os.name:
+            raise ValueError("Retry the in-flight cycle in its original path environment")
         cycle = manifest["cycles"][-1]
         point = next((item for item in cycle["points"] if item["id"] == point_id), None)
         if point is None or not point["error"]:
             raise ValueError("Point has no recorded worker error")
-        run = Path(point["run"]) if point["run"] else None
+        run = _run_path(campaign, point["run"]) if point["run"] else None
         state = run_status(run) if run else "QUEUED"
         if (state == "STAGED" and (run / "submission_intent.json").is_file()
                 and not (run / "submission_result.json").is_file()):
@@ -660,12 +728,50 @@ def finish(campaign: Path, decision: str, selected: list[str] | None = None) -> 
     return inspect_campaign(campaign)
 
 
+def retire(campaign: Path, reason: str, superseded_by: Path | None = None) -> dict:
+    """End obsolete bookkeeping without changing runs or claiming a simulation passed."""
+    campaign = campaign.resolve()
+    if not reason.strip():
+        raise ValueError("Retirement needs an audit reason")
+    with _lock(campaign):
+        manifest = _manifest(campaign)
+        if manifest["status"] not in {"PAUSED", "AWAITING_POINTS", "REVIEW", "NEEDS_ATTENTION"}:
+            raise ValueError("Pause active work before retiring it")
+        successor = None
+        if superseded_by is not None:
+            successor = superseded_by.resolve(strict=True)
+            if successor == campaign or successor.parent != campaign.parent:
+                raise ValueError("Successor must be another campaign in this project")
+            if _manifest(successor)["status"] != "CLOSED":
+                raise ValueError("Successor campaign must be CLOSED")
+        for cycle in manifest["cycles"]:
+            for point in cycle["points"]:
+                if not point["run"]:
+                    continue
+                run = _run_path(campaign, point["run"])
+                state = run_status(run)
+                if state in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"}:
+                    raise ValueError(f"Run {run.name} still needs reconciliation: {state}")
+                if state == "STAGED" and ((run / "submission_intent.json").exists()
+                                           or (run / "submission_result.json").exists()):
+                    raise ValueError(f"Run {run.name} has submission evidence; reconcile it first")
+        backup = campaign / f"campaign.before-retire.{uuid.uuid4().hex[:8]}.json"
+        shutil.copy2(campaign / "campaign.json", backup)
+        manifest["retirement"] = {"at": utc_now(), "reason": reason.strip(),
+                                  "prior_status": manifest["status"],
+                                  "superseded_by": successor.name if successor else None,
+                                  "backup": backup.name, "backup_sha256": sha256(backup)}
+        manifest["status"] = "RETIRED"
+        _save(campaign, manifest)
+    return inspect_campaign(campaign)
+
+
 def propose(campaign: Path) -> dict:
     """Call an optional user-owned proposer; never auto-submit its suggestion."""
     manifest = _manifest(campaign)
     if manifest["status"] not in {"AWAITING_POINTS", "REVIEW"}:
         raise ValueError("Proposals are accepted only at a decision boundary")
-    cfg = load_config(Path(manifest["project_config"]))
+    cfg = load_config(_project_config_path(campaign, manifest))
     specification = cfg.get("campaign", {}).get("proposer")
     if not specification:
         raise ValueError("Configure campaign.proposer in the user project")
@@ -674,7 +780,7 @@ def propose(campaign: Path) -> dict:
     memory = retrieve_memory(cfg)
     context = {"campaign_id": manifest["campaign_id"],
                "cycle_count": len(manifest["cycles"]), "policy": manifest["policy"],
-               "project_config": manifest["project_config"],
+               "project_config": str(_project_config_path(campaign, manifest)),
                "latest_comparison": read_json(comparison_path) if comparison_path else None,
                "memory": memory}
     result = load_function(specification, Path(cfg["_project_root"]))(context)

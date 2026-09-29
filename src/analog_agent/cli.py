@@ -67,6 +67,10 @@ def main() -> int:
     campaign_finish.add_argument("campaign", type=Path)
     campaign_finish.add_argument("--decision", required=True)
     campaign_finish.add_argument("--select", action="append", default=[])
+    campaign_retire = actions.add_parser("retire", help="End obsolete campaign bookkeeping without touching runs")
+    campaign_retire.add_argument("campaign", type=Path)
+    campaign_retire.add_argument("--reason", required=True)
+    campaign_retire.add_argument("--superseded-by", type=Path)
     campaign_replay = actions.add_parser("replay", help="Offline multi-cycle decision replay; no simulation")
     campaign_replay.add_argument("config", type=Path)
     campaign_replay.add_argument("history", type=Path)
@@ -166,6 +170,8 @@ def main() -> int:
                                                        args.run, args.reason)
         elif action == "finish":
             output = campaign_flow.finish(args.campaign, args.decision, args.select)
+        elif action == "retire":
+            output = campaign_flow.retire(args.campaign, args.reason, args.superseded_by)
         elif action == "replay":
             result = replay_history(args.config, args.history)
             output = {key: value for key, value in result.items() if key != "final_knowledge"}

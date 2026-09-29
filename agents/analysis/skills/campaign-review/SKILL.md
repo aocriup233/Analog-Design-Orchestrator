@@ -11,4 +11,6 @@ Compare user-configured metrics, verdicts, failed jobs, and optional Pareto cand
 
 If `doctor` reports an uncertain submission, do not re-submit it. Use a site adapter's verified `reconcile` lookup when available, or inspect the actual scheduler job with the user's site workflow. Do not treat queue acceptance as a completed simulation.
 
+`doctor` can inspect project-local run evidence across Windows/WSL paths, but execute an in-flight cycle in its original path environment. A new cycle may switch environments at the review boundary. For an obsolete paused or empty campaign, `campaign retire ... --reason ...` records an audited terminal status with a manifest backup; it does not modify runs. Never retire an in-flight or uncertain submission.
+
 After a reviewed comparison, the user or analysis AI may write a short private candidate JSON with local evidence paths. `analog-agent memory submit PROJECT.json CANDIDATE.json` records it as unreviewed; `analog-agent memory review PROJECT.json ID --approve/--reject --reason TEXT` is the explicit gate. A single passing run never promotes itself to memory. Keep PDK and circuit-specific claims private; public scripts and skills change only through separate review.

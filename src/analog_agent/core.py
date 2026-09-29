@@ -8,7 +8,7 @@ import os
 import re
 import uuid
 from datetime import datetime, timezone
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -191,7 +191,20 @@ def create_run(config_path: Path, iteration: int, overrides: dict[str, str] | No
 
 
 def run_config(run: Path) -> dict[str, Any]:
+    run = run.resolve()
     cfg = read_json(run / "config.json")
+    root = run.parent.parent
+    saved_root = cfg.get("_project_root")
+    saved_config = cfg.get("_config_path")
+    if not isinstance(saved_root, str) or not isinstance(saved_config, str):
+        raise ValueError("Run config lacks its original project location")
+    old_root = PurePosixPath(saved_root.replace("\\", "/"))
+    old_config = PurePosixPath(saved_config.replace("\\", "/"))
+    if (old_root.name.casefold() != root.name.casefold()
+            or old_config.parent != old_root or ".." in old_config.parts):
+        raise ValueError("Run config does not belong to this project")
+    cfg["_project_root"] = str(root)
+    cfg["_config_path"] = str(local_path(root, old_config.name))
     manifest_path = run / "private_manifest.json"
     expected = read_json(manifest_path) if manifest_path.is_file() else {}
     _apply_private(cfg, expected)
