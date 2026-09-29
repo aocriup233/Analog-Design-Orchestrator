@@ -1,3 +1,10 @@
 {
-  "metrics": {}
+  "metrics": {},
+  "memory": {
+    "path": "private/agents/analysis/memory.json",
+    "context": {},
+    "hard_keys": ["pdk", "model_revision", "topology"],
+    "max_items": 4,
+    "max_chars": 1200
+  }
 }

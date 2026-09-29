@@ -20,7 +20,7 @@ ADO 把电路决策与 EDA 环境操作分开：用户或外部 LLM 控制器提
 - 通用波形分窗、重叠、取点、参考线对照、眼图及 FFT；电路专属指标由项目插件提供。
 - 公用配置与用户私有的配置、脚本、skill 分层。
 
-当前三个 worker 是确定性的 Python 子进程，**不是内置的三个自主 LLM**。外部 LLM 可以根据交接结果决定下一版电路；自动更新专家知识和“适用于所有集群的现成适配器”尚未实现。
+当前三个 worker 是确定性的 Python 子进程，**不是内置的三个自主 LLM**。外部 LLM 可以根据交接结果决定下一版电路；可选的私有记忆层现已支持限长检索和显式审核后写回，但不会自行批准经验，也没有“适用于所有集群的现成适配器”。
 
 ## 安装与首次试运行
 
@@ -144,6 +144,20 @@ analog-agent campaign status CAMPAIGN_DIR
 
 `campaign replay PROJECT.json HISTORY.json` 是公用的离线多轮回放功能；[两轮示例](examples/replay_history.json)可配合 `project.example.json` 运行。历史文件提供每轮已记录的对比结果和决策；核心逐轮校验并在内存中积累不含电路假设的证据。它不要求电路专属知识或 proposer，也不会创建 run 或调用仿真器。若项目配置了私有 proposer，回放可将证据交给它并校验候选。某轮设 `"source": "proposal"` 时，观测参数必须来自该轮提案；人工选择的点可设为 `"manual"`。命令行仅返回检查点 ID 和哈希，不输出私有知识内容。私有经验是否抽为公用脚本或 skill，由主 agent 按[知识公用化流程](agents/analysis/skills/knowledge-promotion/SKILL.md)审核和实现，用户项目不需要提供发布函数。
 
+### 限长检索的私有记忆
+
+记忆为可选功能，保存在用户工程，不存入公用仓库。将[空白私有示例](private.example/agents/analysis/memory.json)复制到 `private/agents/analysis/memory.json`，并参考[私有 override 示例](private.example/agents/analysis/config/overrides.json)配置 `memory.path`、`memory.context`、`hard_keys`、`max_items` 和 `max_chars`。检索上下文与电路目标由用户定义。默认硬过滤键是 `pdk`、`model_revision`、`topology`：条目声明了这些范围、但与查询不符或查询缺少该键时，条目不会进入结果。其余已审核条目按上下文/标签匹配数排序，同分时按稳定 ID 排序。默认最多返回四条短摘要、序列化后最多 1200 字符；不向 LLM 发送原始波形、完整证据，也不需要向量库。字符上限是确定性上下文约束，不等于精确 tokenizer 计数。
+
+```sh
+analog-agent memory brief project.json              # 首次电路决策前检索
+analog-agent memory show project.json ENTRY_ID      # 需要时才读取完整证据
+analog-agent memory submit project.json private/agents/analysis/CANDIDATE.json
+analog-agent memory review project.json ENTRY_ID --approve --reason "已核对证据"
+# 或：--reject --reason "有反例或适用范围失效"
+```
+
+候选 JSON 放在 `private/` 下，包含 `id`、`kind`、不超过 300 字的摘要、`scope` 对象和至少一个相对工程目录的 `evidence` 文件路径，例如 `{"id":"lesson_a","kind":"design","summary":"仅在声明范围内成立的测量经验","scope":{"pdk":"process_a","topology":"stage_a"},"evidence":["campaigns/ID/cycle-0001_comparison.json"]}`。提交时记录证据哈希；证据改变则不能通过审核。候选或被否决条目不会被检索。`campaign new` 和每一轮会保存精简记忆快照；`campaign propose` 把快照交给私有 proposer，`campaign brief` 在中断后还原本轮冻结的选择。活动轮次中途修改记忆文件会触发输入不一致保护，须先处理该轮状态。`campaign replay` 仍只是内存中的决策回放，不会批准或发布记忆。
+
 若聊天因 token 不足而中断，先运行 `campaign doctor CAMPAIGN_DIR` 检查持久化状态，再用 `campaign brief CAMPAIGN_DIR` 获取供 AI 接续的精简摘要；随后 `campaign run` 或 `campaign step` 可脱离旧聊天记录续跑。`campaign pause`/`resume` 暂停或恢复本地调度，不会停止已提交的远端作业。若提交可能已发生但本地没有回执，状态会被标为不确定，**绝不盲目重投**。LSF 私有适配器可选实现 `reconcile(run, config, staged, intent)`，按 run ID 查找真实作业；`analog-agent reconcile RUN_DIR` 接管查证过的回执后，才可用 `campaign retry CAMPAIGN_DIR POINT_ID` 重新启用该步骤。没有查询能力时，须人工核对调度器，不可直接重试。同一轮会冻结公用配置、私有 override 和已声明的模板、规则、插件、include 文件哈希；其他站点依赖可列入 `campaign.dependencies`。应在两轮之间修改电路配置。会话数据放在被忽略的 `<project>/campaigns/`，独立用户工程也应忽略该目录；同一会话必须在相同的 Windows 或 WSL 路径环境中续跑。
 
 若站点必须通过交互式或其他进程外方式执行仿真，可设 `simulation.backend` 为 `external`。相同的 `campaign step/run/doctor` 工作流只生成并暂存带哈希的 deck，返回 `AWAITING_EXECUTION`，不会自行提交。私有站点仿真角色完成传输、提交、取回和验证，写入标准 run 交接文件并达到 `VERIFIED`；下一次 `campaign step` 继续调用分析角色和设计循环。通用核心不包含 SSH、Telnet、LSF 或凭据处理；站点角色必须遵守 run 状态与哈希契约。`external` 是可恢复的协调边界，不代表无人值守仿真。
@@ -156,7 +170,7 @@ analog-agent campaign status CAMPAIGN_DIR
 
 使用 [waveform_tool.py](agents/analysis/scripts/waveform_tool.py) 和 `agents/analysis/config/` 下的 JSON 请求，可进行分窗、重叠、插值取点、参考线、眼图折叠与 FFT。绘图功能需可选的 NumPy、Matplotlib。大量波形保存在文件中；给 LLM 的默认上下文应只包含关键指标、判定、相关图路径和按需截取的数据。
 
-`AGENTS.md` 为各角色指引项目内 skills。公用 skill 与脚本应保持稳定；工艺和电路专属知识放在用户工程中。以后可围绕这些有证据的交接产物增加模型驱动的设计循环和专家知识库，而无需改变确定性的执行契约。
+`AGENTS.md` 为各角色指引项目内 skills。公用 skill 与脚本应保持稳定；工艺和电路专属知识放在用户工程中。私有记忆层以经审核的证据辅助决策，不改变确定性的执行契约，也不自动将用户知识升级为公用代码。
 
 ## 远期规划（尚非当前版本能力）
 

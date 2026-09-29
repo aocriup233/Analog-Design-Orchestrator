@@ -8,7 +8,8 @@ from pathlib import Path
 
 from .analysis_agent import analyze
 from . import campaign as campaign_flow
-from .core import create_run, read_json, run_config
+from .core import create_run, load_config, read_json, run_config
+from . import memory as project_memory
 from .netlist_agent import prepare
 from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
@@ -69,6 +70,23 @@ def main() -> int:
     campaign_replay = actions.add_parser("replay", help="Offline multi-cycle decision replay; no simulation")
     campaign_replay.add_argument("config", type=Path)
     campaign_replay.add_argument("history", type=Path)
+    memory = sub.add_parser("memory", help="Private reviewed memory; bounded retrieval")
+    memory_actions = memory.add_subparsers(dest="memory_command", required=True)
+    memory_brief = memory_actions.add_parser("brief", help="Retrieve a compact decision context")
+    memory_brief.add_argument("config", type=Path)
+    memory_show = memory_actions.add_parser("show", help="Inspect one entry and its evidence on demand")
+    memory_show.add_argument("config", type=Path)
+    memory_show.add_argument("entry_id")
+    memory_submit = memory_actions.add_parser("submit", help="Store an unreviewed candidate")
+    memory_submit.add_argument("config", type=Path)
+    memory_submit.add_argument("candidate", type=Path)
+    memory_review = memory_actions.add_parser("review", help="Approve or reject one candidate")
+    memory_review.add_argument("config", type=Path)
+    memory_review.add_argument("entry_id")
+    choice = memory_review.add_mutually_exclusive_group(required=True)
+    choice.add_argument("--approve", action="store_true")
+    choice.add_argument("--reject", action="store_true")
+    memory_review.add_argument("--reason", required=True)
     worker = sub.add_parser("worker", help=argparse.SUPPRESS)
     worker.add_argument("role", choices=["netlist", "simulation", "analysis"])
     worker.add_argument("run", type=Path)
@@ -153,6 +171,17 @@ def main() -> int:
             output = {key: value for key, value in result.items() if key != "final_knowledge"}
         else:
             output = campaign_flow.propose(args.campaign)
+    elif args.command == "memory":
+        cfg = load_config(args.config)
+        if args.memory_command == "brief":
+            output = project_memory.brief_view(project_memory.retrieve(cfg))
+        elif args.memory_command == "show":
+            output = project_memory.show(cfg, args.entry_id)
+        elif args.memory_command == "submit":
+            output = project_memory.submit_candidate(cfg, args.candidate)
+        else:
+            output = project_memory.review(cfg, args.entry_id, approve=args.approve,
+                                           rationale=args.reason)
     else:
         if args.role == "netlist":
             output = prepare(args.run)

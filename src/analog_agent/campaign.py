@@ -22,6 +22,7 @@ from typing import Any
 from .core import (create_run, load_config, local_path, private_manifest, read_json,
                    run_config, sha256, utc_now, write_json)
 from .plugins import load_function
+from .memory import brief_view as memory_brief_view, retrieve as retrieve_memory
 from .state import status as run_status
 from .workflow import cleanup, invoke_role
 
@@ -70,6 +71,8 @@ def _declared_inputs(cfg: dict) -> dict[str, str]:
     for paths in simulation.get("rules_by_testbench", {}).values():
         names.update(paths)
     names.update(simulation.get("include_files", []))
+    if cfg.get("memory", {}).get("path"):
+        names.add(cfg["memory"]["path"])
     for specification in (cfg.get("netlist", {}).get("generator"),
                           block.get("adapter"),
                           *(bench.get("generator") for bench in netlist.get("testbenches", {}).values()),
@@ -142,6 +145,8 @@ def create_campaign(config_path: Path) -> Path:
     identifier = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}"
     campaign = root / "campaigns" / identifier
     campaign.mkdir(parents=True, exist_ok=False)
+    if cfg.get("memory"):
+        write_json(campaign / "memory_initial.json", retrieve_memory(cfg))
     _save(campaign, {"schema": 1, "campaign_id": identifier,
                      "project_config": str(config_path.resolve()),
                      "path_environment": os.name, "created_at": utc_now(),
@@ -240,6 +245,11 @@ def add_cycle(campaign: Path, points_path: Path, *, decision: str = "",
                  "declared_inputs": _declared_inputs(cfg),
                  "metric_directions": cycle_directions,
                  "points": points}
+        if cfg.get("memory"):
+            snapshot = campaign / f"{cycle['id']}_memory.json"
+            write_json(snapshot, retrieve_memory(cfg))
+            cycle["memory_snapshot"] = str(snapshot)
+            cycle["memory_snapshot_sha256"] = sha256(snapshot)
         manifest["cycles"].append(cycle)
         manifest["status"] = "ACTIVE"
         _save(campaign, manifest)
@@ -550,6 +560,13 @@ def brief(campaign: Path) -> dict:
     packet = {"campaign": str(campaign), "status": health["status"],
               "next_action": health["next_action"], "policy": manifest["policy"],
               "decision_history": history, "current_cycle": latest}
+    if manifest["cycles"] and manifest["cycles"][-1].get("memory_snapshot"):
+        snapshot = Path(manifest["cycles"][-1]["memory_snapshot"])
+        if sha256(snapshot) != manifest["cycles"][-1]["memory_snapshot_sha256"]:
+            raise ValueError("Frozen campaign memory snapshot changed")
+        packet["memory"] = memory_brief_view(read_json(snapshot))
+    elif (campaign / "memory_initial.json").is_file():
+        packet["memory"] = memory_brief_view(read_json(campaign / "memory_initial.json"))
     if latest and latest["comparison"]:
         comparison = read_json(Path(latest["comparison"]))
         packet["latest_comparison"] = {
@@ -654,15 +671,18 @@ def propose(campaign: Path) -> dict:
         raise ValueError("Configure campaign.proposer in the user project")
     latest = manifest["cycles"][-1] if manifest["cycles"] else None
     comparison_path = campaign / f"{latest['id']}_comparison.json" if latest else None
+    memory = retrieve_memory(cfg)
     context = {"campaign_id": manifest["campaign_id"],
                "cycle_count": len(manifest["cycles"]), "policy": manifest["policy"],
                "project_config": manifest["project_config"],
-               "latest_comparison": read_json(comparison_path) if comparison_path else None}
+               "latest_comparison": read_json(comparison_path) if comparison_path else None,
+               "memory": memory}
     result = load_function(specification, Path(cfg["_project_root"]))(context)
     if not isinstance(result, dict):
         raise TypeError("Campaign proposer must return an object with points")
     _validate_points(manifest, result, cfg)
     path = campaign / f"proposal_{uuid.uuid4().hex[:8]}.json"
     write_json(path, result)
+    write_json(path.with_name(path.stem + "_memory.json"), memory)
     return {"proposal": str(path), "point_count": len(result["points"]),
-            "review_required": True}
+            "review_required": True, "memory_selection_sha256": memory.get("selection_sha256")}

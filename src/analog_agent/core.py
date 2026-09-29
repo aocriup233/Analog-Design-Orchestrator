@@ -148,6 +148,8 @@ def _validate_config(cfg: dict[str, Any]) -> None:
         for item in paths:
             if not isinstance(item, str) or not local_path(root, item).is_file():
                 raise FileNotFoundError(item)
+    from .memory import validate_config as validate_memory
+    validate_memory(cfg)
 
 
 def load_config(path: Path) -> dict[str, Any]:
@@ -176,6 +178,9 @@ def create_run(config_path: Path, iteration: int, overrides: dict[str, str] | No
     public["_config_path"] = str(config_path.resolve())
     write_json(run / "config.json", public)
     write_json(run / "private_manifest.json", private_manifest(root))
+    if runtime.get("memory"):
+        from .memory import retrieve
+        write_json(run / "memory_snapshot.json", retrieve(runtime))
     write_json(run / "task.json", {
         "run_id": run.name, "iteration": iteration,
         "overrides": overrides or {}, "testbench": testbench,

@@ -20,7 +20,7 @@ The diagram shows the three role handoffs, the campaign decision loop, and the s
 - Generic waveform windows, overlays, samples, reference comparisons, eye diagrams, and FFTs; project plugins provide circuit-specific metrics.
 - Public configuration plus ignored, user-owned private configuration, scripts, and skills.
 
-Workers are deterministic Python processes, **not three built-in autonomous LLMs**. An LLM controller may use their artifacts to choose the next design. Automatic expert-knowledge updates and a ready-to-use adapter for every cluster are not implemented yet.
+Workers are deterministic Python processes, **not three built-in autonomous LLMs**. An LLM controller may use their artifacts to choose the next design. Optional private memory now supports bounded retrieval and explicitly reviewed write-back; it does not self-approve lessons or provide a ready-to-use adapter for every cluster.
 
 ## Installation and a first run
 
@@ -144,6 +144,20 @@ After review, call `campaign add CAMPAIGN_DIR NEXT_POINTS.json --decision "reaso
 
 `campaign replay PROJECT.json HISTORY.json` is a shared, offline multi-cycle check; [this two-cycle example](examples/replay_history.json) runs with `project.example.json`. The history supplies recorded comparison and decision objects; the core validates each cycle and accumulates a circuit-neutral in-memory evidence ledger. It neither creates runs nor invokes a simulator, and needs no circuit-specific knowledge or proposer. If a private proposer is configured, replay also passes it the ledger to check proposals. A cycle can declare `"source": "proposal"` to require its observed parameter points to come from that round's proposal, or `"manual"` for a human-chosen point. CLI output contains checkpoint IDs and hashes, not private knowledge values. Reuse of private methods in the public project is a separate main-agent review following [knowledge promotion](agents/analysis/skills/knowledge-promotion/SKILL.md); user projects do not provide a publishing hook.
 
+### Private memory with a bounded LLM context
+
+Memory is opt-in and stored in the user project, not this public repository. Copy [the empty private example](private.example/agents/analysis/memory.json) to `private/agents/analysis/memory.json` and configure `memory.path`, `memory.context`, `hard_keys`, `max_items` and `max_chars` as shown in the [private override example](private.example/agents/analysis/config/overrides.json). Context keys and circuit goals are user-owned. The default hard keys are `pdk`, `model_revision` and `topology`: a scoped entry is excluded when one of these disagrees or the query lacks that key. Among compatible **reviewed** entries, exact context/tag matches rank first; stable IDs break ties. Retrieval sends at most four short summaries and 1,200 serialized characters by default—no raw waveforms, full evidence, embeddings or vector database. Character limits are deterministic context caps, not exact tokenizer counts.
+
+```sh
+analog-agent memory brief project.json              # before the first design decision
+analog-agent memory show project.json ENTRY_ID      # full evidence only on demand
+analog-agent memory submit project.json private/agents/analysis/CANDIDATE.json
+analog-agent memory review project.json ENTRY_ID --approve --reason "reviewed evidence"
+# or: --reject --reason "counterexample or stale scope"
+```
+
+A candidate file under `private/` contains `id`, `kind`, a summary of at most 300 characters, a `scope` object, and nonempty `evidence` paths relative to the project, for example `{"id":"lesson_a","kind":"design","summary":"Measured observation within its stated scope","scope":{"pdk":"process_a","topology":"stage_a"},"evidence":["campaigns/ID/cycle-0001_comparison.json"]}`. Submission hashes the referenced files; review refuses changed evidence. Candidate/rejected entries are never retrieved. `campaign new` and each cycle save a compact memory snapshot; `campaign propose` passes one to the private proposer, and `campaign brief` restores the frozen selection after interruption. Changing the memory file during an active cycle blocks further scheduling until that cycle's input mismatch is resolved. `campaign replay` remains an in-memory decision check; it does not approve or publish memory.
+
 If a chat loses context or tokens, use `campaign doctor CAMPAIGN_DIR` to inspect durable point/run states and `campaign brief CAMPAIGN_DIR` for a compact AI handoff; then `campaign run` or `campaign step` continues without old chat history. `campaign pause`/`resume` stop/restart local scheduling, not already-submitted remote jobs. An interrupted submission with no local receipt is marked uncertain and **never blindly resubmitted**. An LSF site adapter may implement optional `reconcile(run, config, staged, intent)` to look up the real job by run ID; `analog-agent reconcile RUN_DIR` adopts that verified receipt, after which `campaign retry CAMPAIGN_DIR POINT_ID` re-enables the safe step. Without that lookup, inspect the scheduler manually and do not retry. A cycle freezes the public config, private overrides, and declared input-file hashes (template, rules, plugins, includes); list additional site files in `campaign.dependencies`. Change circuit configuration between cycles, not midway through one. Campaigns live under ignored `<project>/campaigns/`; ignore that directory in an independent project too. Run and resume each campaign in the same Windows or WSL path environment.
 
 For sites that require an interactive or otherwise out-of-process executor, set `simulation.backend` to `external`. The same `campaign step/run/doctor` workflow stages a hashed deck and returns `AWAITING_EXECUTION` without submitting it. A private site simulation worker then performs transfer, submission, retrieval, and verification, writing the normal run handoffs and reaching `VERIFIED`; the next `campaign step` invokes the analysis role and continues the cycle. The core never embeds SSH, Telnet, LSF, or credential handling, and the site worker must preserve the run's state and hash contract. `external` is a resumable coordination boundary, not unattended simulation.
@@ -156,7 +170,7 @@ The netlist worker owns `netlist_result.json`; the simulation worker owns `simul
 
 Use [waveform_tool.py](agents/analysis/scripts/waveform_tool.py) with the JSON requests under `agents/analysis/config/` for separate windows, overlays, interpolated points, reference lines, eye folding, and FFT. NumPy and Matplotlib are optional dependencies needed for these plotting functions. Keep large waveform arrays in artifacts; show an LLM only the metrics, verdicts, relevant plot paths, and requested excerpts.
 
-`AGENTS.md` routes project-local skills to the roles. These skills and the common scripts are intended to remain stable; circuit- and PDK-specific knowledge belongs in user projects. A model-driven design loop and evidence-backed expert memory can be added around the artifacts without changing the deterministic execution contract.
+`AGENTS.md` routes project-local skills to the roles. These skills and the common scripts are intended to remain stable; circuit- and PDK-specific knowledge belongs in user projects. The private memory layer augments decisions with reviewed evidence without changing the deterministic execution contract or automatically promoting user knowledge into public code.
 
 ## Roadmap (not yet part of the released workflow)
 
