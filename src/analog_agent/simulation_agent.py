@@ -262,6 +262,11 @@ def advance(run: Path, simulator_factory=None) -> dict:
     """Make safe progress once; never wait indefinitely for an LSF job."""
     run = run.resolve()
     current = status(run)
+    if run_config(run).get("simulation", {}).get("backend") == "external":
+        if current == "NETLIST_READY":
+            stage(run, simulator_factory)
+        return {"status": status(run), "run": str(run),
+                "next_action": "site simulation worker must submit and verify the staged deck"}
     if current == "NETLIST_READY":
         stage(run, simulator_factory)
         current = "STAGED"
@@ -298,6 +303,8 @@ def resume(run: Path) -> dict:
 
 def simulate(run: Path, simulator_factory=None) -> dict:
     """Compatibility entry point: synchronous backends finish in one call."""
+    if run_config(run.resolve()).get("simulation", {}).get("backend") == "external":
+        return advance(run, simulator_factory)
     if status(run.resolve()) in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"}:
         return resume(run)
     return advance(run, simulator_factory)

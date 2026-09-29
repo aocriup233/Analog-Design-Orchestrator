@@ -331,14 +331,21 @@ def step(campaign: Path) -> dict:
         manifest = _manifest(campaign)
         if os.name != manifest["path_environment"]:
             raise ValueError("Resume the campaign in the same path environment")
-        if manifest["status"] not in {"ACTIVE", "NEEDS_ATTENTION"}:
+        if manifest["status"] not in {"ACTIVE", "AWAITING_EXECUTION", "NEEDS_ATTENTION"}:
             return inspect_campaign(campaign)
         cycle = manifest["cycles"][-1]
         input_issue = _cycle_input_issue(manifest, cycle)
+        try:
+            external = (load_config(Path(manifest["project_config"]))
+                        .get("simulation", {}).get("backend") == "external")
+        except Exception:
+            external = False  # input_issue already records the validation failure
         if input_issue:
             cycle["issue"] = input_issue
             cycle["status"] = manifest["status"] = "NEEDS_ATTENTION"
         elif cycle.pop("issue", None) and not any(point["error"] for point in cycle["points"]):
+            cycle["status"] = manifest["status"] = "ACTIVE"
+        elif manifest["status"] == "AWAITING_EXECUTION":
             cycle["status"] = manifest["status"] = "ACTIVE"
         points = cycle["points"]
         parallel = manifest["policy"]["max_parallel"]
@@ -350,11 +357,15 @@ def step(campaign: Path) -> dict:
             _save(campaign, manifest)
         if (manifest["status"] == "ACTIVE" and not cycle.get("issue")
                 and not any(point["error"] for point in points)):
-            occupied = sum(_point_state(point) in {"SUBMITTED", "RUN"} for point in points
+            occupied_states = ({"STAGED", "SUBMITTED", "RUN", "DONE", "RETRIEVED"}
+                               if external else {"SUBMITTED", "RUN"})
+            occupied = sum(_point_state(point) in occupied_states for point in points
                            if point["run"])
             slots = max(0, parallel - occupied)
             candidates = [point for point in points if not point["error"] and
-                          _point_state(point) in {"QUEUED", "CREATED", "NETLIST_READY", "STAGED"}]
+                          _point_state(point) in ({"QUEUED", "CREATED", "NETLIST_READY"}
+                                                   if external else
+                                                   {"QUEUED", "CREATED", "NETLIST_READY", "STAGED"})]
             selected = candidates[:slots]
             for point in selected:
                 if not point["run"]:
@@ -368,6 +379,10 @@ def step(campaign: Path) -> dict:
         elif all(point["run"] and _point_state(point) in TERMINAL for point in points):
             _comparison(campaign, manifest, cycle)
             cycle["status"] = manifest["status"] = "REVIEW"
+        elif external and any(point["run"] and _point_state(point) in
+                              {"STAGED", "SUBMITTED", "RUN", "DONE", "RETRIEVED"}
+                              for point in points):
+            cycle["status"] = manifest["status"] = "AWAITING_EXECUTION"
         _save(campaign, manifest)
         return inspect_campaign(campaign)
 
@@ -421,7 +436,7 @@ def inspect_campaign(campaign: Path) -> dict:
                   for state in sorted({point["state"] for point in points})}
         current_issue = (_cycle_input_issue(manifest, cycle)
                          if cycle is manifest["cycles"][-1] and manifest["status"] in
-                         {"ACTIVE", "NEEDS_ATTENTION"} else None)
+                         {"ACTIVE", "AWAITING_EXECUTION", "NEEDS_ATTENTION"} else None)
         cycles.append({"id": cycle["id"], "status": cycle["status"],
                        "issue": current_issue or cycle.get("issue"),
                        "counts": counts, "points": points,
@@ -430,6 +445,7 @@ def inspect_campaign(campaign: Path) -> dict:
     return {"campaign": str(campaign), "status": manifest["status"],
             "policy": manifest["policy"], "cycles": cycles,
             "next_action": {"ACTIVE": "step or run", "PAUSED": "resume",
+                            "AWAITING_EXECUTION": "site simulation worker verifies staged runs, then step",
                             "NEEDS_ATTENTION": "drain existing jobs, inspect issues, then retry safe points",
                             "REVIEW": "review comparison, then add next cycle or finish",
                             "AWAITING_POINTS": "add points", "CLOSED": "none"}[manifest["status"]]}
@@ -482,8 +498,8 @@ def run_until_review(campaign: Path, max_seconds: int = 3600) -> dict:
 def pause(campaign: Path) -> dict:
     with _lock(campaign.resolve()):
         manifest = _manifest(campaign)
-        if manifest["status"] != "ACTIVE":
-            raise ValueError("Only an active campaign can be paused")
+        if manifest["status"] not in {"ACTIVE", "AWAITING_EXECUTION"}:
+            raise ValueError("Only an active or awaiting-execution campaign can be paused")
         manifest["status"] = "PAUSED"
         _save(campaign, manifest)
     return inspect_campaign(campaign)

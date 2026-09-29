@@ -30,7 +30,9 @@ def invoke_role(role: str, run: Path) -> None:
             f"{completed.stderr or completed.stdout}"
         )
     handoffs = {"netlist": ("netlist_result.json",),
-                "simulation": ("submission_result.json", "simulation_result.json"),
+                "simulation": (("staging_result.json",) if
+                               cfg.get("simulation", {}).get("backend") == "external" else
+                               ("submission_result.json", "simulation_result.json")),
                 "analysis": ("analysis_result.json",)}[role]
     if not any((run / name).is_file() for name in handoffs):
         raise RuntimeError(f"{role} worker returned success without a handoff: {handoffs}")

@@ -120,6 +120,8 @@ analog-agent campaign status CAMPAIGN_DIR
 
 若聊天因 token 不足而中断，先运行 `campaign doctor CAMPAIGN_DIR` 检查持久化状态，再用 `campaign brief CAMPAIGN_DIR` 获取供 AI 接续的精简摘要；随后 `campaign run` 或 `campaign step` 可脱离旧聊天记录续跑。`campaign pause`/`resume` 暂停或恢复本地调度，不会停止已提交的远端作业。若提交可能已发生但本地没有回执，状态会被标为不确定，**绝不盲目重投**。LSF 私有适配器可选实现 `reconcile(run, config, staged, intent)`，按 run ID 查找真实作业；`analog-agent reconcile RUN_DIR` 接管查证过的回执后，才可用 `campaign retry CAMPAIGN_DIR POINT_ID` 重新启用该步骤。没有查询能力时，须人工核对调度器，不可直接重试。同一轮会冻结公用配置、私有 override 和已声明的模板、规则、插件、include 文件哈希；其他站点依赖可列入 `campaign.dependencies`。应在两轮之间修改电路配置。会话数据放在被忽略的 `<project>/campaigns/`，独立用户工程也应忽略该目录；同一会话必须在相同的 Windows 或 WSL 路径环境中续跑。
 
+若站点必须通过交互式或其他进程外方式执行仿真，可设 `simulation.backend` 为 `external`。相同的 `campaign step/run/doctor` 工作流只生成并暂存带哈希的 deck，返回 `AWAITING_EXECUTION`，不会自行提交。私有站点仿真角色完成传输、提交、取回和验证，写入标准 run 交接文件并达到 `VERIFIED`；下一次 `campaign step` 继续调用分析角色和设计循环。通用核心不包含 SSH、Telnet、LSF 或凭据处理；站点角色必须遵守 run 状态与哈希契约。`external` 是可恢复的协调边界，不代表无人值守仿真。
+
 ## 结果、波形与角色边界
 
 网表 worker 负责 `netlist_result.json`；仿真 worker 负责 `simulation_plan.json`、暂存/提交/轮询/回传文件，验证后才写 `simulation_result.json`；分析 worker 负责 `analysis_result.json`。设计网表交接后不可再改动。项目专属指标插件接收解析后的数据并返回数值。`PASS` **仅表示用户配置的 `rules` 通过**，不是某种电路的通用性能保证。

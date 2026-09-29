@@ -85,8 +85,8 @@ def _validate_config(cfg: dict[str, Any]) -> None:
         raise ValueError("workflow.return_mode must be summary or full")
     if cfg.get("workflow", {}).get("cleanup", "never") not in {"never", "after_success"}:
         raise ValueError("workflow.cleanup must be never or after_success")
-    if cfg.get("simulation", {}).get("backend", "bridge") not in {"bridge", "local", "lsf"}:
-        raise ValueError("simulation.backend must be bridge, local, or lsf")
+    if cfg.get("simulation", {}).get("backend", "bridge") not in {"bridge", "local", "lsf", "external"}:
+        raise ValueError("simulation.backend must be bridge, local, lsf, or external")
     if cfg.get("simulation", {}).get("backend") == "lsf" and not cfg.get("simulation", {}).get("adapter"):
         raise ValueError("simulation.adapter is required for the lsf backend")
     if cfg.get("simulation", {}).get("remote_cleanup", "never") not in {"never", "manual", "after_verified"}:

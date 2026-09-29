@@ -163,8 +163,18 @@ class LSFBackend:
         return self._call("cleanup", run, config, submitted)
 
 
+class ExternalBackend:
+    """Stage a verified local deck for a site worker; never touch the site."""
+
+    def stage(self, run: Path, config: dict, plan: dict) -> dict:
+        return {"input": plan["deck"], "input_sha256": plan["deck_sha256"],
+                "execution": "site_worker"}
+
+
 def backend_for(config: dict, run: Path, simulator_factory=None) -> SimulationBackend:
     kind = config.get("simulation", {}).get("backend", "bridge")
     if kind == "lsf":
         return LSFBackend(config, run)
+    if kind == "external":
+        return ExternalBackend()
     return BridgeBackend(local=kind == "local", simulator_factory=simulator_factory)

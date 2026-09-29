@@ -12,7 +12,7 @@ from analog_agent.campaign import (add_cycle, brief, create_campaign, finish, in
                                    pause, propose, resume, retry, step)
 from analog_agent.core import read_json, write_json
 from analog_agent.simulation_agent import reconcile_submission
-from analog_agent.state import status as run_status
+from analog_agent.state import status as run_status, transition
 
 
 ADAPTER = '''\
@@ -217,6 +217,38 @@ class CampaignTest(unittest.TestCase):
         self.assertFalse((run / "poll_count").exists())
         adapter.write_text(original, encoding="utf-8")
         self.assertEqual(step(campaign)["cycles"][0]["counts"], {"RUN": 1})
+
+    def test_external_site_worker_uses_same_campaign_loop(self):
+        cfg = read_json(self.config)
+        cfg["simulation"] = {"backend": "external"}
+        cfg["campaign"]["max_parallel"] = 1
+        write_json(self.config, cfg)
+        campaign = create_campaign(self.config)
+        add_cycle(campaign, self._points(["1k", "2k"]))
+        first = step(campaign)
+        self.assertEqual(first["status"], "AWAITING_EXECUTION")
+        self.assertEqual(first["cycles"][0]["counts"], {"QUEUED": 1, "STAGED": 1})
+        self.assertEqual(step(campaign)["cycles"][0]["counts"], {"QUEUED": 1, "STAGED": 1})
+
+        def verified_external_run(index, value):
+            point = read_json(campaign / "campaign.json")["cycles"][0]["points"][index]
+            run = Path(point["run"])
+            net = read_json(run / "netlist_result.json")
+            write_json(run / "submission_result.json", {"job_id": f"site-{index}"})
+            transition(run, "SUBMITTED")
+            transition(run, "DONE")
+            transition(run, "RETRIEVED")
+            write_json(run / "simulation_result.json", {
+                "status": "DONE", "data": {"dc_A": value},
+                "netlist_sha256": net["netlist_sha256"]})
+            transition(run, "VERIFIED")
+
+        verified_external_run(0, 1.0)
+        second = step(campaign)
+        self.assertEqual(second["status"], "AWAITING_EXECUTION")
+        self.assertEqual(second["cycles"][0]["counts"], {"ANALYZED": 1, "STAGED": 1})
+        verified_external_run(1, 2.0)
+        self.assertEqual(step(campaign)["status"], "REVIEW")
 
 
 if __name__ == "__main__":
