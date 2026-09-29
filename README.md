@@ -8,6 +8,10 @@ ADO separates circuit decisions from EDA operations. A designer or an external L
 
 The Python distribution and CLI remain named `analog-agent` for compatibility. **ADO is the project name, not a new CLI command.**
 
+![ADO architecture and workflow](docs/architecture-workflow.svg)
+
+The diagram shows the three role handoffs, the campaign decision loop, and the separate offline replay path. Public scripts and private project adapters feed the same workflow without embedding PDK or site assumptions.
+
 ## What is implemented
 
 - Optional reusable `block.scs` plus goal-specific `testbench.scs`, composed into design `input.scs`; simulator-owned `simulation.scs` remains separate, with reusable DC, AC, STB, and transient rule files. Legacy single-file input remains supported.

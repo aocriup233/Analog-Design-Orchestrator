@@ -9,8 +9,7 @@ from types import SimpleNamespace
 from analog_agent.analysis_agent import analyze
 from analog_agent.core import create_run, read_json, write_json
 from analog_agent.netlist_agent import prepare
-from analog_agent.sim_rules import build_deck
-from analog_agent.simulation_agent import simulate
+from analog_agent.simulation_agent import simulate, stage
 from analog_agent.workflow import cleanup
 from analog_agent.state import transition
 
@@ -154,8 +153,9 @@ class WorkflowTest(unittest.TestCase):
         self.assertNotEqual(dc["testbench"]["sha256"], ac["testbench"]["sha256"])
         self.assertIn("acmag=1", Path(ac["netlist"]).read_text(encoding="utf-8"))
         self.assertEqual(ac["testbench"]["name"], "ac")
-        plan = build_deck(Path(ac["netlist"]), {**cfg, "_project_root": str(self.root)},
-                          Path(ac["netlist"]).parent.parent)
+        ac_run = Path(ac["netlist"]).parent.parent
+        stage(ac_run)
+        plan = read_json(ac_run / "simulation_plan.json")
         self.assertEqual(plan["testbench"], "ac")
         self.assertIn("acSweep ac", plan["statements"][0])
         with self.assertRaisesRegex(ValueError, "Unknown testbench"):

@@ -42,7 +42,8 @@ def stage(run: Path, simulator_factory=None) -> dict:
             if sha256(Path(item["path"])) != item["sha256"]:
                 raise ValueError("Simulation rule changed after plan creation")
     else:
-        plan = build_deck(design, cfg, run) if cfg.get("simulation", {}).get("rules") else {
+        rules = cfg.get("simulation", {})
+        plan = build_deck(design, cfg, run) if (rules.get("rules") or rules.get("rules_by_testbench")) else {
             "deck": str(design), "deck_sha256": net["netlist_sha256"],
             "design_sha256": net["netlist_sha256"], "rules": [], "statements": []}
     backend = backend_for(cfg, run, simulator_factory)

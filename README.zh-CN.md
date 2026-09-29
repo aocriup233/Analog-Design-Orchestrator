@@ -8,6 +8,10 @@ ADO 把电路决策与 EDA 环境操作分开：用户或外部 LLM 控制器提
 
 为兼容现有工程，Python 包和命令仍叫 `analog-agent`；**ADO 是项目正式名称，不是新的 CLI 命令。**
 
+![ADO 架构与工作流](docs/architecture-workflow.svg)
+
+图中区分了三个角色的交接、campaign 的决策循环，以及不调用仿真器的离线回访。公用脚本与用户私有适配器服务同一工作流，框架本身不写死 PDK 或站点环境。
+
 ## 已实现的能力与边界
 
 - 可选的复用电路 `block.scs` 与按测量目标选择的 `testbench.scs` 独立保存，合成兼容现有后端的 `input.scs`；仿真角色单独管理 `simulation.scs` 和 DC、AC、STB、瞬态规则。原有单文件模式仍可用。

@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="940" viewBox="0 0 1200 940" role="img" aria-labelledby="title desc">
+  <title id="title">Analog Design Orchestrator architecture and workflow</title>
+  <desc id="desc">Shared and private configuration support decisions by the user and external LLM. Three isolated workers prepare a reusable circuit block and testbench, execute simulation, and analyze verified results. Campaigns coordinate iterations; offline replay checks recorded decisions without simulation.</desc>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 10 4 0 8Z" fill="#526579"/></marker>
+    <marker id="arrow-blue" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0 0 10 4 0 8Z" fill="#2563a6"/></marker>
+    <style>
+      text{font-family:Inter,"Segoe UI","Microsoft YaHei",sans-serif;fill:#172a3b}
+      .title{font-size:28px;font-weight:700}.subtitle{font-size:15px;fill:#516477}
+      .heading{font-size:19px;font-weight:700}.body{font-size:15px}.small{font-size:13px;fill:#526579}
+      .code{font-family:Consolas,"Cascadia Code",monospace;font-size:14px}.label{font-size:13px;font-weight:700;letter-spacing:.04em}
+      .card{fill:#fff;stroke:#c9d5df;stroke-width:1.5}.private{fill:#fff9eb;stroke:#e5c783;stroke-width:1.5}
+      .control{fill:#eef5fc;stroke:#8fb8dd;stroke-width:1.5}.net{fill:#eef8f6;stroke:#77b8a8;stroke-width:1.5}
+      .sim{fill:#f0f4fc;stroke:#90a7d6;stroke-width:1.5}.analysis{fill:#f7f1fc;stroke:#b59ad1;stroke-width:1.5}
+      .campaign{fill:#edf5fd;stroke:#8fb8dd;stroke-width:1.5}.replay{fill:#f4f7f9;stroke:#aebfc9;stroke-width:1.5;stroke-dasharray:6 5}
+      .divider{stroke:#d9e3ea;stroke-width:1}.flow{fill:none;stroke:#526579;stroke-width:2.5;marker-end:url(#arrow)}
+      .decision-flow{fill:none;stroke:#2563a6;stroke-width:2.5;marker-end:url(#arrow-blue)}
+    </style>
+  </defs>
+  <rect width="1200" height="940" rx="20" fill="#f8fafc"/>
+  <text class="title" x="44" y="48">Analog Design Orchestrator</text>
+  <text class="subtitle" x="44" y="73">Circuit decisions stay with the user and external LLM; repeatable work runs in isolated local workers.</text>
+
+  <rect class="card" x="44" y="99" width="537" height="97" rx="14"/>
+  <text class="heading" x="65" y="129">Public / 公用</text>
+  <text class="body" x="65" y="155">Workflow contracts · role skills · reusable scripts</text>
+  <text class="small" x="65" y="179">DC / AC / STB / tran rules · waveform toolkit · replay</text>
+  <rect class="private" x="600" y="99" width="555" height="97" rx="14"/>
+  <text class="heading" x="621" y="129">User project / 私有</text>
+  <text class="body" x="621" y="155">PDK bindings · Canvas mapping · simulator / cluster adapter</text>
+  <text class="small" x="621" y="179">Circuit goals, TB sources, metrics and expert proposer</text>
+
+  <rect class="control" x="44" y="219" width="1111" height="96" rx="14"/>
+  <text class="label" x="66" y="246" fill="#2563a6">DECISION LAYER · 用户 + 外部 LLM</text>
+  <text class="heading" x="66" y="273">Choose circuit revision, simulation goal, testbench and candidate points</text>
+  <text class="small" x="66" y="298">project.json · analog-agent new --testbench NAME · campaign propose → review → add</text>
+  <path class="decision-flow" d="M215 315V347"/>
+  <text class="small" x="228" y="339">one run or campaign point</text>
+
+  <rect class="net" x="44" y="355" width="341" height="306" rx="16"/>
+  <text class="label" x="66" y="383" fill="#16745f">01 · NETLIST WORKER</text>
+  <text class="heading" x="66" y="412">Reusable block + TB</text>
+  <line class="divider" x1="66" x2="363" y1="427" y2="427"/>
+  <text class="body" x="66" y="454">Block: LLM Spectre source</text>
+  <text class="body" x="66" y="478">or user-drawn Analog Canvas</text>
+  <text class="small" x="66" y="502">Explicit ports + reviewed PDK mapping</text>
+  <text class="body" x="66" y="532">Selected TB: stimulus + load</text>
+  <text class="code" x="66" y="565">netlist_agent.prepare()</text>
+  <line class="divider" x1="66" x2="363" y1="582" y2="582"/>
+  <text class="small" x="66" y="608">block.scs + testbench.scs → input.scs</text>
+  <text class="small" x="66" y="633">netlist_result.json · independent hashes</text>
+
+  <path class="flow" d="M385 508H421"/>
+  <rect class="sim" x="429" y="355" width="341" height="306" rx="16"/>
+  <text class="label" x="451" y="383" fill="#405ca1">02 · SIMULATION WORKER</text>
+  <text class="heading" x="451" y="412">Rules + execution</text>
+  <line class="divider" x1="451" x2="748" y1="427" y2="427"/>
+  <text class="body" x="451" y="454">TB-specific DC / AC / STB / tran</text>
+  <text class="code" x="451" y="478">sim_rules.build_deck()</text>
+  <text class="small" x="451" y="502">simulation.scs includes input.scs</text>
+  <text class="body" x="451" y="532">Bridge / local / LSF / external</text>
+  <text class="code" x="451" y="565">simulation_agent.simulate()</text>
+  <line class="divider" x1="451" x2="748" y1="582" y2="582"/>
+  <text class="small" x="451" y="608">stage → submit → poll → retrieve → verify</text>
+  <text class="small" x="451" y="633">simulation_result.json · verified data</text>
+
+  <path class="flow" d="M770 508H806"/>
+  <rect class="analysis" x="814" y="355" width="341" height="306" rx="16"/>
+  <text class="label" x="836" y="383" fill="#7850a1">03 · ANALYSIS WORKER</text>
+  <text class="heading" x="836" y="412">Metrics + evidence</text>
+  <line class="divider" x1="836" x2="1133" y1="427" y2="427"/>
+  <text class="body" x="836" y="454">Waveform windows, overlay,</text>
+  <text class="body" x="836" y="478">samples, references, eye, FFT</text>
+  <text class="small" x="836" y="502">Project metrics + acceptance rules</text>
+  <text class="code" x="836" y="565">analysis_agent.analyze()</text>
+  <line class="divider" x1="836" x2="1133" y1="582" y2="582"/>
+  <text class="small" x="836" y="608">analysis_result.json · PASS / FAIL</text>
+  <text class="small" x="836" y="633">Raw cleanup only when configured + PASS</text>
+
+  <path class="flow" d="M985 661V689"/>
+  <rect class="campaign" x="44" y="697" width="1111" height="105" rx="14"/>
+  <text class="label" x="66" y="724" fill="#2563a6">DURABLE CAMPAIGN · LOOP + BOUNDED PARALLEL POINTS</text>
+  <text class="body" x="66" y="754">campaign add / step / run → three-role runs → comparison → user/analysis-AI review</text>
+  <text class="small" x="66" y="780">Next cycle or finish · doctor / brief recovers state · uncertain submissions need reconciliation</text>
+  <path class="decision-flow" d="M44 751H24V267H39"/>
+
+  <rect class="replay" x="44" y="831" width="752" height="83" rx="14"/>
+  <text class="label" x="65" y="859" fill="#526579">OFFLINE REPLAY · 不运行仿真</text>
+  <text class="body" x="65" y="884">History JSON → campaign.replay() → evidence ledger / checkpoints</text>
+  <text class="small" x="65" y="903">No new run, netlist worker or EDA submission</text>
+  <rect class="card" x="815" y="831" width="340" height="83" rx="14"/>
+  <text class="label" x="836" y="859" fill="#526579">ROLE BOUNDARY</text>
+  <text class="body" x="836" y="884">Files under runs/&lt;run_id&gt;/</text>
+  <text class="small" x="836" y="903">Immutable, hashed handoffs</text>
+</svg>
