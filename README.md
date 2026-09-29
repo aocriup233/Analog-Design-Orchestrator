@@ -158,6 +158,14 @@ Use [waveform_tool.py](agents/analysis/scripts/waveform_tool.py) with the JSON r
 
 `AGENTS.md` routes project-local skills to the roles. These skills and the common scripts are intended to remain stable; circuit- and PDK-specific knowledge belongs in user projects. A model-driven design loop and evidence-backed expert memory can be added around the artifacts without changing the deterministic execution contract.
 
+## Roadmap (not yet part of the released workflow)
+
+- **PVT and Monte Carlo:** add declarative corner, temperature, supply, variation and sample/seed configuration, with bounded scheduling, per-point provenance, partial-failure recovery, and cross-corner/statistical analysis. `virtuoso-bridge` already exposes Maestro controls, but ADO does **not** yet turn Maestro PVT/MC setup, execution and result collection into a portable, tested role workflow. The netlist-driven and Maestro-driven paths should share run evidence and analysis contracts while keeping PDK-specific corners and models private.
+- **Bayesian optimization:** implement an optional, replaceable `campaign.proposer` that uses the accumulated evidence ledger to suggest bounded candidate batches, uncertainty-aware trade-offs and constraint handling. Initial points, objectives, specifications and stop decisions remain user/project-owned; proposals still require user/analysis-AI review before submission. This must not hard-code a circuit family or replace deterministic worker handoffs.
+- **Layout subagent:** introduce a separately owned layout stage after a reviewed circuit block, with its own immutable artifacts and user approval boundary. Private technology rules and tools would drive layout creation or import, DRC/LVS/PEX checks, and post-layout simulation feedback into the existing analysis/campaign loop. This is a proposed fourth role, not a capability of the current three-worker release.
+
+These items will be promoted only after repeated real-project tests; structural/API availability alone is not electrical or workflow validation.
+
 ## Verification and release boundaries
 
 Run the local tests with `python -m unittest discover -s tests -q`. They cover synchronous handoffs, rule generation, waveform operations, and a **fake** LSF adapter with cross-process resume; they do not certify any particular user's real cluster. Before publishing a site configuration, verify login/identity, PDK readability, file-transfer hashes, scheduler job ID and status, simulator logs, result retrieval, and cleanup with captured output from that site.
