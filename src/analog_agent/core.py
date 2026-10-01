@@ -95,8 +95,21 @@ def _validate_config(cfg: dict[str, Any]) -> None:
         source_key = "path" if block["kind"] == "source" else "project"
         if not isinstance(block.get(source_key), str) or not local_path(root, block[source_key]).is_file():
             raise ValueError(f"netlist.block.{source_key} must name a project file")
-        if block["kind"] == "canvas" and not block.get("adapter") and not block.get("canvas_root"):
-            raise ValueError("Canvas block needs a private mapping adapter or canvas_root")
+        if block["kind"] == "canvas":
+            runtime_sources = [key for key in ("adapter", "canvas_root", "canvas_root_config")
+                               if block.get(key)]
+            if len(runtime_sources) != 1:
+                raise ValueError("Canvas block needs exactly one adapter, canvas_root, or canvas_root_config")
+            if "canvas_root_config" in runtime_sources:
+                runtime_path = local_path(root, block["canvas_root_config"])
+                runtime = read_json(runtime_path)
+                if not isinstance(runtime.get("canvas_root"), str) or not runtime["canvas_root"]:
+                    raise ValueError("Canvas runtime config needs canvas_root")
+                canvas_root = Path(runtime["canvas_root"]).resolve()
+                for module in ("packages/project-protocol/dist/index.js",
+                               "packages/netlist/dist/index.js"):
+                    if not (canvas_root / module).is_file():
+                        raise FileNotFoundError(canvas_root / module)
         dependencies = block.get("dependencies", [])
         if not isinstance(dependencies, list) or any(
                 not isinstance(item, str) or not local_path(root, item).is_file()

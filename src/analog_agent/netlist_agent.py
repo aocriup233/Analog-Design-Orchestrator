@@ -66,9 +66,18 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
             raise FileNotFoundError(generated)
         block_text = generated.read_text(encoding="utf-8")
     else:
+        runtime = (read_json(local_path(root, block["canvas_root_config"]))
+                   if block.get("canvas_root_config") else {})
+        if block.get("canvas_root_config"):
+            dependencies[block["canvas_root_config"]] = sha256(
+                local_path(root, block["canvas_root_config"]))
+        canvas_root = Path(runtime.get("canvas_root", block.get("canvas_root", ""))).resolve()
+        for module in ("packages/project-protocol/dist/index.js",
+                       "packages/netlist/dist/index.js"):
+            dependencies[f"canvas_runtime/{module}"] = sha256(canvas_root / module)
         exporter = Path(__file__).with_name("canvas_export.mjs")
         process = subprocess.run(
-            [block.get("node", "node"), str(exporter), str(block["canvas_root"]),
+            [runtime.get("node", block.get("node", "node")), str(exporter), str(canvas_root),
              str(block_source), str(block_dest)], capture_output=True, text=True,
             timeout=int(block.get("export_timeout_s", 60)), check=False)
         if process.returncode:

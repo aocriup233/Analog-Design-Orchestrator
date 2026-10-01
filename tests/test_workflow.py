@@ -112,6 +112,49 @@ class WorkflowTest(unittest.TestCase):
         self.assertTrue(closed["role_complete"])
         self.assertIsNone(closed["owner_role"])
 
+    def test_remote_cleanup_gates_decision_handoff_when_required(self):
+        cfg = read_json(self.config)
+        cfg["simulation"]["remote_cleanup_required"] = True
+        write_json(self.config, cfg)
+        run = create_run(self.config, 0)
+        prepare(run)
+        for state in ("STAGED", "SUBMITTED", "DONE", "RETRIEVED", "VERIFIED", "ANALYZED"):
+            transition(run, state)
+        pending = decide_run(run, "accept", "Reviewed local result")
+        self.assertEqual(pending["owner_role"], "simulation")
+        self.assertEqual(pending["next_action"], "cleanup_remote")
+        self.assertFalse(pending["role_complete"])
+        write_json(run / "remote_cleanup.json", {"status": "DONE", "backend_data": {
+            "verified_absent": ["/site/run"]}})
+        completed = role_obligation(run)
+        self.assertTrue(completed["role_complete"])
+        self.assertIsNone(completed["owner_role"])
+
+    def test_external_cleanup_receipt_requires_local_archive_and_absence(self):
+        cfg = read_json(self.config)
+        cfg["simulation"]["backend"] = "external"
+        cfg["simulation"]["remote_cleanup_required"] = True
+        write_json(self.config, cfg)
+        run = create_run(self.config, 0)
+        prepare(run)
+        for state in ("STAGED", "SUBMITTED", "DONE", "RETRIEVED", "VERIFIED"):
+            transition(run, state)
+        decide_run(run, "iterate", "Bias revision", "netlist")
+        archive = run / "result.tar"
+        archive.write_bytes(b"local verified result")
+        from analog_agent.core import sha256
+        receipt = {"status": "VERIFIED_CLEANED", "run_id": run.name,
+                   "local_result_archive": str(archive), "local_result_sha256": sha256(archive),
+                   "paths": [{"path": "/site/run", "verified_absent": False,
+                              "observed_stdout": ""}]}
+        write_json(run / "remote_cleanup.json", receipt)
+        self.assertEqual(role_obligation(run)["next_action"], "cleanup_remote")
+        receipt["paths"][0].update(verified_absent=True, observed_stdout="absent: run")
+        write_json(run / "remote_cleanup.json", receipt)
+        self.assertEqual(role_obligation(run)["owner_role"], "netlist")
+        archive.write_bytes(b"changed")
+        self.assertEqual(role_obligation(run)["next_action"], "cleanup_remote")
+
     def test_modified_netlist_rejected(self):
         run = create_run(self.config, 0)
         net = prepare(run)
@@ -263,6 +306,36 @@ class WorkflowTest(unittest.TestCase):
         write_json(self.config, cfg)
         with self.assertRaisesRegex(ValueError, "port order"):
             prepare(create_run(self.config, 0))
+
+    def test_canvas_runtime_location_comes_from_project_private_config(self):
+        canvas_root = self.root / "canvas_checkout"
+        protocol = canvas_root / "packages" / "project-protocol" / "dist"
+        netlist = canvas_root / "packages" / "netlist" / "dist"
+        protocol.mkdir(parents=True)
+        netlist.mkdir(parents=True)
+        (canvas_root / "package.json").write_text('{"type":"module"}', encoding="utf-8")
+        (protocol / "index.js").write_text(
+            "export const parseProject = JSON.parse;\n", encoding="utf-8")
+        (netlist / "index.js").write_text(
+            "export const unfinishedDrawingDiagnostics = () => [];\n"
+            "export const createDesignNetlistExport = () => ({status:'ready',"
+            " diagnostics:[], file:{text:'simulator lang=spectre\\nsubckt dut (A B)\\n"
+            "R0 (A B) resistor r=1k\\nends dut\\n'}});\n", encoding="utf-8")
+        (self.root / "drawing.icproj.json").write_text("{}", encoding="utf-8")
+        (self.root / "tb.scs").write_text("X0 (A B) dut\n", encoding="utf-8")
+        write_json(self.root / "private" / "canvas.json", {"canvas_root": str(canvas_root)})
+        cfg = read_json(self.config)
+        del cfg["template"]
+        cfg["netlist"] = {
+            "block": {"kind": "canvas", "project": "drawing.icproj.json",
+                      "canvas_root_config": "private/canvas.json", "name": "dut",
+                      "pins": ["A", "B"]},
+            "testbenches": {"dc": {"path": "tb.scs"}}, "default_testbench": "dc"}
+        write_json(self.config, cfg)
+        prepared = prepare(create_run(self.config, 0))
+        self.assertIn("R0 (A B) resistor r=1k", Path(prepared["netlist"]).read_text(encoding="utf-8"))
+        self.assertIn("private/canvas.json", prepared["block"]["dependencies"])
+        self.assertIn("canvas_runtime/packages/netlist/dist/index.js", prepared["block"]["dependencies"])
 
 
 if __name__ == "__main__":

@@ -7,7 +7,28 @@ import subprocess
 import sys
 from pathlib import Path
 
-from .core import create_run, read_json, run_config, update_status, utc_now, write_json
+from .core import create_run, read_json, run_config, sha256, update_status, utc_now, write_json
+
+
+def _remote_cleanup_complete(run: Path) -> bool:
+    receipt = run / "remote_cleanup.json"
+    if not receipt.is_file():
+        return False
+    report = read_json(receipt)
+    backend = run_config(run).get("simulation", {}).get("backend", "bridge")
+    if backend != "external" and report.get("status") in {"DONE", "NOT_APPLICABLE"}:
+        return True
+    if report.get("status") != "VERIFIED_CLEANED" or report.get("run_id") != run.name:
+        return False
+    archive = Path(report.get("local_result_archive", "")).resolve()
+    if not archive.is_file() or not archive.is_relative_to(run):
+        return False
+    if sha256(archive).lower() != str(report.get("local_result_sha256", "")).lower():
+        return False
+    paths = report.get("paths")
+    return bool(paths) and all(item.get("verified_absent") is True and
+                               item.get("path") and item.get("observed_stdout")
+                               for item in paths)
 
 
 def role_obligation(run: Path) -> dict:
@@ -41,7 +62,11 @@ def role_obligation(run: Path) -> dict:
         decision = read_json(decision_path)
         if decision["source_status"] != state:
             raise ValueError("Role decision does not match the reviewed run state")
-        if decision["decision"] == "accept":
+        cleanup_required = run_config(run).get("simulation", {}).get("remote_cleanup_required", False)
+        cleanup_done = _remote_cleanup_complete(run)
+        if cleanup_required and not cleanup_done:
+            role, action = "simulation", "cleanup_remote"
+        elif decision["decision"] == "accept":
             role, action = None, None
         else:
             role, action = decision["next_role"], "create_successor_run"

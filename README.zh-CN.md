@@ -66,7 +66,7 @@ analog-agent new project.json
 
 TB 负责实例化 block、激励和负载；DC/AC/STB/tran 分析语句仍由仿真角色依据 `simulation.rules` 写入。可选的 `simulation.rules_by_testbench` 将 TB 名称映射到不同规则文件列表，例如 `{"dc": ["rules/dc.json"], "ac": ["rules/ac.json"]}`。执行 `analog-agent new project.json --testbench ac` 可选择 AC TB 及对应规则组。campaign 的每个 point 也可写 `"testbench": "ac"`；参数相同但 TB 不同的点视为不同任务。网表角色独立保存 `block.scs`、`testbench.scs` 及哈希，再合成给现有仿真后端的 `input.scs`。修改已交接内容须新建 run。
 
-Canvas block 使用 `project` 代替 `path`，并配置 `canvas_root`（本地已构建的 Analog Canvas，器件/模型绑定须在画布中明确完成），或私有工艺映射函数，例如 `"adapter": "private/agents/netlist/scripts/map_canvas.py:export"`。函数接收 `(config, task, run, values)`，返回生成的 Spectre block 文件路径。额外映射或模型输入列入 `netlist.block.dependencies`，使 campaign 冻结文件哈希。Canvas 导出与端口检查仅验证结构，工艺映射和电气结果仍需用户审查；公用框架不含某种 PDK 或电路目标。
+Canvas block 使用 `project` 代替 `path`。推荐在 block 中设置 `"canvas_root_config": "private/global/config/canvas.json"`，该私有 JSON 写入 `{"canvas_root": "本机已构建的 Analog Canvas 路径", "node": "node"}`；ADO 只实现导出接口，不内置安装位置。也可使用旧的 `canvas_root`，或私有工艺映射函数，例如 `"adapter": "private/agents/netlist/scripts/map_canvas.py:export"`，三者只能选一种。函数接收 `(config, task, run, values)`，返回生成的 Spectre block 文件路径。额外映射或模型输入列入 `netlist.block.dependencies`；运行时会记录私有 Canvas 配置及导出模块哈希。Canvas 导出与端口检查仅验证结构，工艺映射和电气结果仍需用户审查；公用框架不含某种 PDK 或电路目标。
 
 该能力在 `new` 或 campaign point 的 `CREATED`→`NETLIST_READY` 网表阶段触发。既有的离线多轮回访位于 campaign 的决策验证阶段，命令为 `analog-agent campaign replay PROJECT.json HISTORY.json`；它只读取记录的提案、比较和决策，不生成 block/TB、不创建 run，也不启动仿真。因此回访用于检验决策闭环，不代替电气验证。
 
