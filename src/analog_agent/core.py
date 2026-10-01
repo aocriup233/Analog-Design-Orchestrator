@@ -102,6 +102,21 @@ def _validate_config(cfg: dict[str, Any]) -> None:
                 not isinstance(item, str) or not local_path(root, item).is_file()
                 for item in dependencies):
             raise ValueError("netlist.block.dependencies must name project files")
+        bundle = block.get("model_bundle")
+        if bundle is not None:
+            if not isinstance(bundle, dict) or not all(
+                    isinstance(bundle.get(key), str) and bundle[key]
+                    for key in ("config", "renderer", "begin", "end")):
+                raise ValueError("netlist.block.model_bundle needs config, renderer, begin, end")
+            if bundle["begin"] == bundle["end"] or any(
+                    "\n" in bundle[key] or "\r" in bundle[key]
+                    for key in ("begin", "end")):
+                raise ValueError("Model bundle markers must be distinct single lines")
+            if not local_path(root, bundle["config"]).is_file():
+                raise FileNotFoundError(bundle["config"])
+            renderer = bundle["renderer"].rsplit(":", 1)
+            if len(renderer) != 2 or not renderer[0].endswith(".py") or not local_path(root, renderer[0]).is_file():
+                raise ValueError("Model bundle renderer must be a project-local Python function")
         default = netlist.get("default_testbench")
         if default not in benches:
             raise ValueError("netlist.default_testbench must select a declared testbench")

@@ -6,6 +6,9 @@ Decide the next legal design parameter values and, when needed, the circuit topo
 
 Legacy projects may still use `template` or `netlist.generator`. Keep model includes in the block or `simulation.include_files` as appropriate. Do not guess PDK cell names or parameters; check verified project-private model knowledge. The testbench owns sources and loads, while the simulation role owns all analysis statements.
 
+When a private PDK defines an ordered model-section bundle, configure `netlist.block.model_bundle` with a project-local config JSON, renderer function, and exact begin/end markers in the block source. The shared worker replaces only that marked header, hashes both private inputs, and keeps the prepared run immutable. Do not copy a partial include list into a new circuit or overwrite a user's chosen corner to match an older verified run. A changed corner needs a new run and fresh evidence.
+
 For a new topology, edit a source template in the project, then create a new run. Never edit `runs/<run_id>/netlist/input.scs` after it has been handed to simulation. Do not run Spectre from this role.
 
 Handoff: `netlist_result.json` with composed netlist path/hash, chosen parameters and TB, and independent block/TB source/output hashes.
+After a failed run, accept a successor-design task only after an explicit analysis/user `decide-run --decision iterate --to netlist` handoff; create a new run rather than editing the failed one.

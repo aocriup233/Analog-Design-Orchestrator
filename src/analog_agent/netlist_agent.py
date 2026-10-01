@@ -74,6 +74,23 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
         if process.returncode:
             raise ValueError(f"Analog Canvas export failed: {process.stderr.strip()}")
         block_text = block_dest.read_text(encoding="utf-8")
+    bundle = block.get("model_bundle")
+    if bundle:
+        config_path = local_path(root, bundle["config"])
+        renderer_path = bundle["renderer"].rsplit(":", 1)[0]
+        dependencies[bundle["config"]] = sha256(config_path)
+        dependencies[renderer_path] = sha256(local_path(root, renderer_path))
+        begin, end = bundle["begin"], bundle["end"]
+        if block_text.count(begin) != 1 or block_text.count(end) != 1:
+            raise ValueError("Block model bundle markers must occur exactly once")
+        start = block_text.index(begin)
+        finish = block_text.index(end, start) + len(end)
+        rendered = load_function(bundle["renderer"], root)(read_json(config_path))
+        if (not isinstance(rendered, str) or not rendered.startswith(begin + "\n")
+                or not rendered.endswith("\n" + end)
+                or rendered.count(begin) != 1 or rendered.count(end) != 1):
+            raise ValueError("Model bundle renderer returned an invalid marked region")
+        block_text = block_text[:start] + rendered + block_text[finish:]
     _check_interface(block_text, block["name"], block["pins"])
     if re.search(r"(?im)^\s*\w+\s+(?:dc|ac|tran|stb)\b", block_text):
         raise ValueError("Block must not contain simulation analyses")

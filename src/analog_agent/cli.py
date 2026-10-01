@@ -13,7 +13,7 @@ from . import memory as project_memory
 from .netlist_agent import prepare
 from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
-from .workflow import cleanup, invoke_role, role_obligation, run_auto
+from .workflow import cleanup, decide_run, invoke_role, role_obligation, run_auto
 
 
 def main() -> int:
@@ -36,6 +36,11 @@ def main() -> int:
     status.add_argument("run", type=Path)
     duty = sub.add_parser("duty", help="Show the role still responsible for a run")
     duty.add_argument("run", type=Path)
+    decision = sub.add_parser("decide-run", help="Route a reviewed run to its next role")
+    decision.add_argument("run", type=Path)
+    decision.add_argument("--decision", choices=["accept", "iterate"], required=True)
+    decision.add_argument("--to", choices=["netlist", "simulation"])
+    decision.add_argument("--reason", required=True)
     clean = sub.add_parser("cleanup")
     clean.add_argument("run", type=Path)
     remote_clean = sub.add_parser("cleanup-remote", help="Clean verified remote staging artifacts")
@@ -139,6 +144,8 @@ def main() -> int:
                 output[name] = {k: v for k, v in value.items() if k != "data"}
     elif args.command == "duty":
         output = role_obligation(args.run)
+    elif args.command == "decide-run":
+        output = decide_run(args.run, args.decision, args.reason, args.to)
     elif args.command == "cleanup":
         output = {"raw_cleaned": cleanup(args.run)}
     elif args.command == "cleanup-remote":

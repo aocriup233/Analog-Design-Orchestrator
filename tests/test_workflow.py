@@ -10,7 +10,7 @@ from analog_agent.analysis_agent import analyze
 from analog_agent.core import create_run, read_json, write_json
 from analog_agent.netlist_agent import prepare
 from analog_agent.simulation_agent import simulate, stage
-from analog_agent.workflow import cleanup, role_obligation
+from analog_agent.workflow import cleanup, decide_run, role_obligation
 from analog_agent.state import transition
 
 
@@ -83,6 +83,34 @@ class WorkflowTest(unittest.TestCase):
         self.assertEqual(role_obligation(run)["owner_role"], "simulation")
         transition(run, "VERIFIED")
         self.assertEqual(role_obligation(run)["owner_role"], "analysis")
+
+    def test_failed_run_routes_through_analysis_to_next_owner(self):
+        cfg = read_json(self.config)
+        cfg["simulation"]["backend"] = "external"
+        write_json(self.config, cfg)
+        run = create_run(self.config, 0)
+        prepare(run)
+        stage(run)
+        transition(run, "FAILED")
+        self.assertEqual(role_obligation(run)["owner_role"], "analysis")
+        self.assertEqual(role_obligation(run)["next_action"], "triage_failure")
+        with self.assertRaisesRegex(ValueError, "reason"):
+            decide_run(run, "iterate", "", "netlist")
+        routed = decide_run(run, "iterate", "PDK include closure incomplete", "netlist")
+        self.assertEqual(routed["owner_role"], "netlist")
+        self.assertEqual(routed["next_action"], "create_successor_run")
+        with self.assertRaises(FileExistsError):
+            decide_run(run, "iterate", "second decision", "simulation")
+
+    def test_verified_run_requires_analysis_decision_before_closure(self):
+        run = create_run(self.config, 0)
+        prepare(run)
+        for state in ("STAGED", "SUBMITTED", "DONE", "RETRIEVED", "VERIFIED", "ANALYZED"):
+            transition(run, state)
+        self.assertEqual(role_obligation(run)["owner_role"], "analysis")
+        closed = decide_run(run, "accept", "Reviewed electrical result")
+        self.assertTrue(closed["role_complete"])
+        self.assertIsNone(closed["owner_role"])
 
     def test_modified_netlist_rejected(self):
         run = create_run(self.config, 0)
@@ -182,6 +210,35 @@ class WorkflowTest(unittest.TestCase):
         self.assertIn("acSweep ac", plan["statements"][0])
         with self.assertRaisesRegex(ValueError, "Unknown testbench"):
             create_run(self.config, 0, testbench="missing")
+
+    def test_split_block_model_bundle_uses_current_private_config(self):
+        (self.root / "block.scs").write_text(
+            "// BEGIN MODELS\ninclude \"stale.scs\" section=OLD\n// END MODELS\n"
+            "subckt dut (IN OUT VSS)\nR0 (IN OUT) resistor r=@@R@@\nends dut\n",
+            encoding="utf-8")
+        (self.root / "tb.scs").write_text("X0 (IN OUT 0) dut\n", encoding="utf-8")
+        write_json(self.root / "models.json", {"section": "NOM"})
+        (self.root / "render.py").write_text(
+            "def render(config):\n"
+            "    return '// BEGIN MODELS\\ninclude \\\"model.scs\\\" section=' "
+            "+config['section']+'\\n// END MODELS'\n", encoding="utf-8")
+        cfg = read_json(self.config)
+        del cfg["template"]
+        cfg["netlist"] = {
+            "block": {"kind": "source", "path": "block.scs", "name": "dut",
+                      "pins": ["IN", "OUT", "VSS"],
+                      "model_bundle": {"config": "models.json",
+                                       "renderer": "render.py:render",
+                                       "begin": "// BEGIN MODELS", "end": "// END MODELS"}},
+            "testbenches": {"dc": {"path": "tb.scs"}}, "default_testbench": "dc"}
+        write_json(self.config, cfg)
+        first = prepare(create_run(self.config, 0))
+        self.assertIn("section=NOM", Path(first["netlist"]).read_text(encoding="utf-8"))
+        self.assertIn("models.json", first["block"]["dependencies"])
+        write_json(self.root / "models.json", {"section": "FAST"})
+        second = prepare(create_run(self.config, 0))
+        self.assertIn("section=FAST", Path(second["netlist"]).read_text(encoding="utf-8"))
+        self.assertNotEqual(first["block"]["sha256"], second["block"]["sha256"])
 
     def test_canvas_adapter_requires_explicit_port_contract(self):
         (self.root / "drawing.icproj.json").write_text("{}", encoding="utf-8")

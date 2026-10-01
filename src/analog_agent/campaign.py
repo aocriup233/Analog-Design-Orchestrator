@@ -64,6 +64,9 @@ def _declared_inputs(cfg: dict) -> dict[str, str]:
         if block.get(key):
             names.add(block[key])
     names.update(block.get("dependencies", []))
+    bundle = block.get("model_bundle", {})
+    if bundle.get("config"):
+        names.add(bundle["config"])
     for bench in netlist.get("testbenches", {}).values():
         if bench.get("path"):
             names.add(bench["path"])
@@ -76,6 +79,7 @@ def _declared_inputs(cfg: dict) -> dict[str, str]:
         names.add(cfg["memory"]["path"])
     for specification in (cfg.get("netlist", {}).get("generator"),
                           block.get("adapter"),
+                          bundle.get("renderer"),
                           *(bench.get("generator") for bench in netlist.get("testbenches", {}).values()),
                           simulation.get("adapter"),
                           cfg.get("campaign", {}).get("proposer"),
