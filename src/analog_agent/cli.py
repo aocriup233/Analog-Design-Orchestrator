@@ -13,7 +13,7 @@ from . import memory as project_memory
 from .netlist_agent import prepare
 from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
-from .workflow import cleanup, invoke_role, run_auto
+from .workflow import cleanup, invoke_role, role_obligation, run_auto
 
 
 def main() -> int:
@@ -34,6 +34,8 @@ def main() -> int:
     auto.add_argument("config", type=Path)
     status = sub.add_parser("status")
     status.add_argument("run", type=Path)
+    duty = sub.add_parser("duty", help="Show the role still responsible for a run")
+    duty.add_argument("run", type=Path)
     clean = sub.add_parser("cleanup")
     clean.add_argument("run", type=Path)
     remote_clean = sub.add_parser("cleanup-remote", help="Clean verified remote staging artifacts")
@@ -115,7 +117,8 @@ def main() -> int:
             output = result if full else {k: v for k, v in result.items() if k != "data"}
         else:
             output = {"run": str(run), "status": read_json(run / "task.json")["status"],
-                      "submission": read_json(run / "submission_result.json")}
+                      "submission": read_json(run / "submission_result.json"),
+                      "obligation": role_obligation(run)}
     elif args.command == "analyze":
         run = args.run.resolve()
         invoke_role("analysis", run)
@@ -127,12 +130,15 @@ def main() -> int:
         output = run_auto(args.config)
     elif args.command == "status":
         run = args.run.resolve()
-        output = {"task": read_json(run / "task.json")}
+        output = {"task": read_json(run / "task.json"),
+                  "obligation": role_obligation(run)}
         for name in ("netlist_result", "simulation_result", "analysis_result"):
             path = run / f"{name}.json"
             if path.is_file():
                 value = read_json(path)
                 output[name] = {k: v for k, v in value.items() if k != "data"}
+    elif args.command == "duty":
+        output = role_obligation(args.run)
     elif args.command == "cleanup":
         output = {"raw_cleaned": cleanup(args.run)}
     elif args.command == "cleanup-remote":

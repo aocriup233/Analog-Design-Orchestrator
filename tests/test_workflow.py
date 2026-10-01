@@ -10,7 +10,7 @@ from analog_agent.analysis_agent import analyze
 from analog_agent.core import create_run, read_json, write_json
 from analog_agent.netlist_agent import prepare
 from analog_agent.simulation_agent import simulate, stage
-from analog_agent.workflow import cleanup
+from analog_agent.workflow import cleanup, role_obligation
 from analog_agent.state import transition
 
 
@@ -61,6 +61,28 @@ class WorkflowTest(unittest.TestCase):
         self.assertFalse(raw.exists())
         self.assertTrue((run / "analysis_result.json").is_file())
         self.assertEqual(read_json(run / "task.json")["status"], "ANALYZED")
+
+    def test_simulation_role_remains_responsible_after_external_staging(self):
+        cfg = read_json(self.config)
+        cfg["simulation"]["backend"] = "external"
+        write_json(self.config, cfg)
+        run = create_run(self.config, 0)
+        self.assertEqual(role_obligation(run)["owner_role"], "netlist")
+        prepare(run)
+        self.assertEqual(role_obligation(run)["owner_role"], "simulation")
+        stage(run)
+        duty = role_obligation(run)
+        self.assertEqual(duty["status"], "STAGED")
+        self.assertEqual(duty["owner_role"], "simulation")
+        self.assertEqual(duty["next_action"], "reconcile_before_submit")
+        self.assertFalse(duty["role_complete"])
+        transition(run, "SUBMITTED")
+        transition(run, "RUN")
+        transition(run, "DONE")
+        transition(run, "RETRIEVED")
+        self.assertEqual(role_obligation(run)["owner_role"], "simulation")
+        transition(run, "VERIFIED")
+        self.assertEqual(role_obligation(run)["owner_role"], "analysis")
 
     def test_modified_netlist_rejected(self):
         run = create_run(self.config, 0)

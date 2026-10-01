@@ -10,7 +10,37 @@ from pathlib import Path
 from .core import create_run, read_json, run_config, update_status
 
 
-def invoke_role(role: str, run: Path) -> None:
+def role_obligation(run: Path) -> dict:
+    """Return the logical role that still owns a run after any process exits.
+
+    This is derived from durable artifacts, not from whether a worker process
+    or an SSH session is currently alive.  In particular, staging an external
+    simulation is never a completed simulation-role handoff.
+    """
+    run = run.resolve()
+    state = read_json(run / "task.json")["status"]
+    backend = run_config(run).get("simulation", {}).get("backend", "bridge")
+    actions = {
+        "CREATED": ("netlist", "prepare_netlist"),
+        "NETLIST_READY": ("simulation", "stage_and_submit"),
+        "STAGED": ("simulation", "reconcile_before_submit" if backend == "external"
+                   else "submit"),
+        "SUBMITTED": ("simulation", "poll"),
+        "RUN": ("simulation", "poll"),
+        "DONE": ("simulation", "retrieve"),
+        "RETRIEVED": ("simulation", "verify"),
+        "VERIFIED": ("analysis", "analyze"),
+        "ANALYZED": (None, None),
+        "FAILED": (None, None),
+    }
+    if state not in actions:
+        raise ValueError(f"Unknown run state: {state}")
+    role, action = actions[state]
+    return {"run": str(run), "status": state, "owner_role": role,
+            "next_action": action, "role_complete": role is None}
+
+
+def invoke_role(role: str, run: Path) -> dict:
     """Each role runs in a separate Python process; JSON files are its contract."""
     cfg = run_config(run)
     configured = cfg.get("workflow", {}).get("role_commands", {}).get(role)
@@ -36,6 +66,7 @@ def invoke_role(role: str, run: Path) -> None:
                 "analysis": ("analysis_result.json",)}[role]
     if not any((run / name).is_file() for name in handoffs):
         raise RuntimeError(f"{role} worker returned success without a handoff: {handoffs}")
+    return role_obligation(run)
 
 
 def cleanup(run: Path) -> bool:
@@ -63,7 +94,8 @@ def run_auto(config_path: Path, overrides: dict[str, str] | None = None) -> list
         invoke_role("netlist", run)
         invoke_role("simulation", run)
         if not (run / "simulation_result.json").is_file():
-            reports.append({"run_id": run.name, "status": read_json(run / "task.json")["status"]})
+            reports.append({"run_id": run.name, "status": read_json(run / "task.json")["status"],
+                            "obligation": role_obligation(run)})
             break
         sim = read_json(run / "simulation_result.json")
         if sim["status"] != "DONE":
