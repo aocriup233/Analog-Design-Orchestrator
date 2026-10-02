@@ -68,6 +68,8 @@ TB 负责实例化 block、激励和负载；DC/AC/STB/tran 分析语句仍由�
 
 Canvas block 使用 `project` 代替 `path`。推荐在 block 中设置 `"canvas_root_config": "private/global/config/canvas.json"`，该私有 JSON 写入 `{"canvas_root": "本机已构建的 Analog Canvas 路径", "node": "node"}`；ADO 只实现导出接口，不内置安装位置。也可使用旧的 `canvas_root`，或私有工艺映射函数，例如 `"adapter": "private/agents/netlist/scripts/map_canvas.py:export"`，三者只能选一种。函数接收 `(config, task, run, values)`，返回生成的 Spectre block 文件路径。额外映射或模型输入列入 `netlist.block.dependencies`；运行时会记录私有 Canvas 配置及导出模块哈希。Canvas 导出与端口检查仅验证结构，工艺映射和电气结果仍需用户审查；公用框架不含某种 PDK 或电路目标。
 
+站点专属模型包可通过 `netlist.block.model_bundle` 声明私有配置文件、渲染函数及 block 源码中的精确起止标记。网表 worker 只替换标记内的模型内容，并记录两项私有输入的哈希。模型顺序、section 和器件映射由用户工程负责；变更后必须新建 run。
+
 该能力在 `new` 或 campaign point 的 `CREATED`→`NETLIST_READY` 网表阶段触发。既有的离线多轮回访位于 campaign 的决策验证阶段，命令为 `analog-agent campaign replay PROJECT.json HISTORY.json`；它只读取记录的提案、比较和决策，不生成 block/TB、不创建 run，也不启动仿真。因此回访用于检验决策闭环，不代替电气验证。
 
 可参照 `private.example/` 的文件形状。四个可选的 `private/**/config/overrides.json` 会在运行时覆盖公用配置；其内容不复制到 run 的 `config.json`，run 只记录这些文件的 SHA-256，配置中途改变会拒绝续跑。示例中的 `pdk.json`、`transfer.json` 等其他私有文件**不会被核心自动读取**，需要用户的网表生成器或站点适配器主动读取。密码只应通过交互提示或操作系统密钥设施取得，不能写入配置、命令参数、运行产物或仓库。若用户工程单独使用 Git，也应忽略其 `private/` 与 `runs/`。
@@ -81,6 +83,7 @@ Canvas block 使用 `project` 代替 `path`。推荐在 block 中设置 `"canvas
 | `bridge` | 可用的 Virtuoso Bridge 环境/profile 与 Spectre 访问 | 同步提交并解析校验结果 |
 | `local` | 本地 Spectre 可执行文件（`simulation.spectre_cmd`） | 同步提交并解析校验结果 |
 | `lsf` | 在 `simulation.adapter` 指定私有工厂函数，实现六个站点方法 | 异步提交；每次 `resume` 轮询一次 |
+| `external` | 遵守 run 产物与哈希契约的项目私有、由 agent 操作的执行器 | 只暂存 deck、等待独立核验的执行结果；本身不提交 |
 
 LSF 用户可以在私有 `overrides.json` 中选择后端，不公开站点细节：
 
@@ -106,11 +109,15 @@ analog-agent submit RUN_DIR
 analog-agent status RUN_DIR
 analog-agent resume RUN_DIR       # 异步 LSF 可重复调用
 analog-agent analyze RUN_DIR      # 仅在本地结果验证完成后
+analog-agent duty RUN_DIR         # 查看当前逻辑责任角色
+analog-agent decide-run RUN_DIR --decision iterate --to netlist --reason "已审核的证据"
 ```
 
 Bridge/本地模式的 `submit` 一次完成；LSF 模式返回 run，待作业状态变化后再次调用 `resume`。`analog-agent run project.json` 遇到异步提交也会返回，不会无限等待。每个 run 保留任务状态历史、输入哈希、阶段交接、日志或回传产物及分析报告。**同一个 run 应始终在相同的路径环境中继续**；例如创建时记录的是 WSL `/mnt/e/...`，不能中途改用 Windows `E:\...` 路径续跑。
 
 `workflow.submission` 为 `manual` 或 `auto`；`return_mode` 为精简 `summary` 或完整解析数据；`cleanup` 为 `never` 或通过分析后清理本地 raw 的 `after_success`。`simulation.remote_cleanup` 可选 `never`、`manual`、`after_verified`；`cleanup-remote RUN_DIR` 只在本地验证后调用私有后端。队列接受任务或工具命令退出，都不能单独证明仿真成功。
+
+`duty` 根据持久化产物而非 agent 进程是否仍在运行来确定责任。`VERIFIED` 的 run 在审核并调用 `decide-run` 前仍由分析角色负责；`ANALYZED` 也不表示自动接受。对设置了 `simulation.remote_cleanup_required: true` 的 `external` 站点，已有决策的 run 只有在 `remote_cleanup.json` 为 `VERIFIED_CLEANED`、本地结果归档哈希匹配且每个精确远端路径都记录为已核实不存在时，才能完成角色交接。站点 worker 负责提供并核对这些证据；ADO 自身不会登录站点或删除远端文件。
 
 ### 可续跑的并行设计会话
 
@@ -182,6 +189,6 @@ analog-agent memory review project.json ENTRY_ID --approve --reason "已核对�
 
 ## 验证与发布边界
 
-本地测试命令为 `python -m unittest discover -s tests -q`。测试覆盖同步交接、规则生成、波形工具及**假** LSF 适配器的跨进程续跑；不能代替任何用户的真实集群验收。发布某个站点配置前，应凭该站点实际捕获的输出核对登录身份、PDK 可读性、传输哈希、调度器 job ID/状态、仿真日志、结果回传和清理。
+本地测试命令为 `python -m unittest discover -s tests -q`。测试覆盖同步交接、规则生成、波形工具及**假** LSF 适配器的跨进程续跑；不能代替任何用户的真实集群验收。项目私有的交互式 LSF/Spectre 路径还实际跑通过 DC，并核实了结果回传哈希与远端清理；该站点配置、PDK 和电路专属分析并不包含在本仓库。数据集存在规则通过不等于电路规格通过；AC、STB、瞬态、噪声、PVT 和蒙特卡洛仍须按工程分别验证。发布某个站点配置前，应凭该站点实际捕获的输出核对登录身份、PDK 可读性、传输哈希、调度器 job ID/状态、仿真日志、结果回传和清理。
 
 CLI 与交接格式仍在演进（`pyproject.toml` 当前版本为 `0.1.0`）。项目采用 [MIT 许可证](LICENSE)。

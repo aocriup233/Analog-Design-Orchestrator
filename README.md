@@ -68,6 +68,8 @@ The TB supplies stimuli, loads and one block instance; the simulation role still
 
 For a Canvas block, set `project` instead of `path`. Prefer `"canvas_root_config": "private/global/config/canvas.json"` in the block and put `{"canvas_root": "path to a locally built Analog Canvas checkout", "node": "node"}` in that private JSON. ADO owns the export interface, not the installation path. The older `canvas_root` or a private mapping function such as `"adapter": "private/agents/netlist/scripts/map_canvas.py:export"` remain alternatives; choose exactly one. The adapter receives `(config, task, run, values)` and returns a Spectre block-file path. Declare extra mapping/model inputs in `netlist.block.dependencies`; the private Canvas config and export-module hashes are recorded automatically. Canvas export and interface checking are structural only: a user must review PDK mapping and simulation results. No PDK mapping or circuit-specific objective is built into ADO.
 
+For a site-specific model bundle, `netlist.block.model_bundle` can name a private config file, renderer function, and exact begin/end markers in the block source. The netlist worker replaces only that marked region and records both private-input hashes in the run. The project owns model order, sections, and device mapping; changing any of them requires a new run.
+
 The netlist stage is `new` or the `CREATED` campaign point. Offline multi-cycle replay is a separate decision-stage command, `analog-agent campaign replay PROJECT.json HISTORY.json`: it checks recorded proposals, comparisons and decisions without preparing a block/TB, creating runs or launching simulation. It is a rehearsal of campaign reasoning, not a substitute for electrical verification.
 
 Start with `private.example/` for file shapes. Four optional `private/**/config/overrides.json` files are merged into the public project configuration at runtime. Their contents are not copied into `runs/<run_id>/config.json`; the run records their SHA-256 hashes and refuses to continue if they change mid-run. Other private files, including example `pdk.json` and `transfer.json`, are **not read automatically**: the user's generator or site adapter must load them. Keep credentials in an interactive prompt or an operating-system secret facility, never in configuration, command arguments, artifacts, or the repository. If the user project has its own Git repository, ignore its `private/` and `runs/` directories there too.
@@ -81,6 +83,7 @@ For a remote site, configure and verify the path in this order: (1) login hops a
 | `bridge` | Working Virtuoso Bridge environment/profile and Spectre access | Synchronous submit and verified parsed result |
 | `local` | Local Spectre executable (`simulation.spectre_cmd`) | Synchronous submit and verified parsed result |
 | `lsf` | Private factory at `simulation.adapter`; implement all six site methods | Asynchronous submit, then one poll per `resume` call |
+| `external` | A project-private, agent-operated executor that obeys the run artifacts and hashes | Stages a deck and waits for independently verified execution; does not submit by itself |
 
 For LSF, a private override may select the adapter without publishing site details:
 
@@ -106,11 +109,15 @@ analog-agent submit RUN_DIR
 analog-agent status RUN_DIR
 analog-agent resume RUN_DIR       # repeat for asynchronous LSF work
 analog-agent analyze RUN_DIR      # only after local verification
+analog-agent duty RUN_DIR         # inspect the current logical role
+analog-agent decide-run RUN_DIR --decision iterate --to netlist --reason "reviewed evidence"
 ```
 
 `submit` finishes in one call for Bridge/local. For LSF, keep the returned run and invoke `resume` again after the job changes state; `analog-agent run project.json` also stops after an asynchronous submission rather than blocking indefinitely. Every run preserves its task history, input hashes, phase handoffs, logs or retrieved artifacts, and analysis report. Resume a run in the **same path environment** in which it was created (for example, do not switch a run's stored `/mnt/e/...` paths to Windows `E:\...` mid-run).
 
 `workflow.submission` selects `manual` or `auto`; `return_mode` selects compact `summary` or full parsed data; `cleanup` selects `never` or local raw-file removal `after_success`. `simulation.remote_cleanup` is `never`, `manual`, or `after_verified`; `cleanup-remote RUN_DIR` calls the private adapter only after local verification. Do not treat a queue acceptance or process exit alone as simulation success.
+
+`duty` derives role ownership from durable artifacts, not from whether an agent process is still running. A `VERIFIED` run belongs to analysis until a reviewed `decide-run` routes it; an `ANALYZED` result is not automatically accepted. For an `external` site that sets `simulation.remote_cleanup_required: true`, a decided run cannot complete its handoff until `remote_cleanup.json` reports `VERIFIED_CLEANED`, references a matching local result-archive hash, and records each exact remote path as verified absent. The site worker supplies and verifies that evidence; ADO does not log in to the site or delete remote files itself.
 
 ### Durable parallel campaigns
 
@@ -182,6 +189,6 @@ These items will be promoted only after repeated real-project tests; structural/
 
 ## Verification and release boundaries
 
-Run the local tests with `python -m unittest discover -s tests -q`. They cover synchronous handoffs, rule generation, waveform operations, and a **fake** LSF adapter with cross-process resume; they do not certify any particular user's real cluster. Before publishing a site configuration, verify login/identity, PDK readability, file-transfer hashes, scheduler job ID and status, simulator logs, result retrieval, and cleanup with captured output from that site.
+Run the local tests with `python -m unittest discover -s tests -q`. They cover synchronous handoffs, rule generation, waveform operations, and a **fake** LSF adapter with cross-process resume; they do not certify any particular user's real cluster. A project-private interactive LSF/Spectre path has also been exercised with verified DC runs, hash-checked retrieval, and explicit remote cleanup. That site configuration, PDK, and circuit-specific analysis are not included in this repository. A successful dataset-presence rule is not electrical-spec acceptance; AC, STB, transient, noise, PVT, and Monte Carlo must be validated for each project. Before publishing a site configuration, verify login/identity, PDK readability, file-transfer hashes, scheduler job ID and status, simulator logs, result retrieval, and cleanup with captured output from that site.
 
 The CLI and artifact format are still evolving (`pyproject.toml` currently declares version `0.1.0`). The project is released under the [MIT License](LICENSE).
