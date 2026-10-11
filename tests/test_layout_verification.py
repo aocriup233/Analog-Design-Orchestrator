@@ -32,6 +32,13 @@ class VerificationFixture(LayoutWorkerFixture):
             route(self.run)
 
     def dispatch(self, run, operation, payload):
+        if operation == "generate_lvs_source":
+            path = run / payload["destination"]
+            path.write_text(".SUBCKT top\n.ENDS top\n", encoding="utf-8")
+            return {"path": "source.cdl", "sha256": sha256(path), "input_sha256": payload["input_sha256"], "generator_version": "fixture-1"}
+        if operation == "normalize_lvs_source":
+            return {"schema_version": 1, "top": "top", "ports": [], "devices": [],
+                    "complete": True, "unparsed": [], "input_sha256": payload["input_sha256"]}
         if operation == "export_verification_snapshot":
             path = run / payload["destination"] / "snapshot.json"
             write_json(path, self.data)
@@ -49,7 +56,8 @@ class VerificationFixture(LayoutWorkerFixture):
             write_json(path, document)
             return {"tool": "calibre", "version": "fixture-1", "exit_code": 0,
                     "cellview_sha256": self.data["sha256"], "used_files": [str(self.rule)],
-                    "report": "normalized.json", "raw_reports": {"normalized.json": sha256(path)}}
+                    "report": "normalized.json", "raw_reports": {"normalized.json": sha256(path)},
+                    "source_cdl_sha256": payload["lvs_source"]["cdl_sha256"] if payload["lvs_source"] else None}
         return super().dispatch(run, operation, payload)
 
 

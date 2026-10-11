@@ -15,6 +15,7 @@ from .layout_floorplan import require_unchanged_floorplan
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
 from .layout_routing import fields
 from .layout_worker import attention, publish, snapshot
+from .layout_lvs_source import prepare_source, check_source
 from .state import status, transition
 
 
@@ -141,6 +142,8 @@ def verify(run: Path, *, session=None):
                 if verification_inputs(run.parent.parent, cfg, "drc", list(drc["rule_sha256"]))["rule_sha256"] != drc["rule_sha256"]:
                     raise LayoutEvidenceError("DRC rules changed before LVS resume")
             section = cfg[stage]
+            source_ref = prepare_source(run, cfg, executor=execute) if stage == "lvs" else None
+            source_proof = check_source(run, source_ref) if source_ref else None
             declared = execute(run, "verify", {"phase": "inputs", "stage": stage, "tool": cfg["tool"], "config": section})
             fields(declared, {"used_files", "version"})
             if not isinstance(declared["version"], str) or not declared["version"].strip():
@@ -152,12 +155,17 @@ def verify(run: Path, *, session=None):
             executed = True
             receipt = execute(run, "verify", {"phase": "run", "stage": stage, "tool": cfg["tool"],
                 "config": section, "work_dir": str(work), "output_dir": output.relative_to(run).as_posix(),
-                "export": export, "schematic": read_json(local_path(run, "layout_inputs.json"))["schematic"], "rules": rules})
-            fields(receipt, {"tool", "version", "exit_code", "cellview_sha256", "used_files", "report", "raw_reports"})
+                "export": export, "schematic": read_json(local_path(run, "layout_inputs.json"))["schematic"],
+                "lvs_source": source_proof, "rules": rules})
+            fields(receipt, {"tool", "version", "exit_code", "cellview_sha256", "used_files", "report", "raw_reports", "source_cdl_sha256"})
             if (receipt["tool"] != cfg["tool"] or receipt["version"] != declared["version"] or type(receipt["exit_code"]) is not int
                     or receipt["exit_code"] != 0 or receipt["cellview_sha256"] != full["sha256"]
                     or verification_inputs(run.parent.parent, cfg, stage, receipt["used_files"]) != rules):
                 raise LayoutEvidenceError("Tool exit, version, cellview or consumed rule hashes mismatch")
+            if receipt["source_cdl_sha256"] != (source_proof["cdl_sha256"] if source_proof else None):
+                raise LayoutEvidenceError("Tool did not consume the CDL bound to the simulation design")
+            if source_ref:
+                check_source(run, source_ref)
             if not isinstance(receipt["raw_reports"], dict) or not receipt["raw_reports"]:
                 raise LayoutEvidenceError("Native raw reports and their hashes are required")
             hashes = {}
@@ -179,7 +187,7 @@ def verify(run: Path, *, session=None):
             report = {"schema_version": 1, "stage": stage, "tool": cfg["tool"], "version": declared["version"],
                 **rules, **parsed, "cellview_sha256": full["sha256"], "placement_sha256": full["placement_sha256"],
                 "routing_result": task["active_routing_result"], "export": export, "raw_reports": hashes,
-                "work_dir": str(work)}
+                "work_dir": str(work), "lvs_source": source_ref, "source_cdl_sha256": receipt["source_cdl_sha256"]}
             reference = publish(run, f"{stage}_reports", report)
             write_json(local_path(run, f"{stage}_report.json"), report)
             transition(run, end, **{f"active_{stage}_report": reference})
@@ -188,6 +196,8 @@ def verify(run: Path, *, session=None):
         current = read_json(local_path(run, "task.json"))
         drc, lvs = (_pinned(run, current[f"active_{s}_report"]) for s in ("drc", "lvs"))
         for report in (drc, lvs):
+            if report["stage"] == "lvs" and check_source(run, report["lvs_source"])["cdl_sha256"] != report["source_cdl_sha256"]:
+                raise LayoutEvidenceError("LVS source proof changed before final certification")
             if (not report["clean"] or report["cellview_sha256"] != full["sha256"] or report["placement_sha256"] != full["placement_sha256"]
                     or report["routing_result"] != current["active_routing_result"] or report["export"] != export):
                 raise LayoutEvidenceError("DRC/LVS do not certify the same routed saved snapshot")

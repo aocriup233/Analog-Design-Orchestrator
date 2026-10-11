@@ -159,6 +159,38 @@ verification. Core performs no remote shell operations or implicit cleanup.
 
 ## Release scope
 
+### LVS source proof (required)
+
+LVS may not compare a fresh export of the current GUI schematic. Configure
+`layout.lvs_source` with `generator`, `normalizer`, explicit `top`, and
+`dependencies` (project-local mapping files). All plugins and dependencies are
+SHA-256 pinned at layout prepare; changing them needs a new linked run.
+The example lvs_source.py deliberately fails until a complete private mapping
+is supplied. Existing layout users must add this configuration before LVS.
+
+`generate_lvs_source` gives the generator an exact local copy of the pinned
+simulation design bytes, input SHA-256, explicit top and exclusive source.cdl
+destination. Return relative path, actual byte SHA-256, input_sha256 and
+generator_version. Generator implementation must be deterministic; no current
+schematic export or uncontrolled dependency lookup. `normalize_lvs_source`
+independently parses the simulation copy and generated CDL with format/path/hash
+and top; each returns schema_version=1, top, ordered ports, devices, complete=true,
+unparsed=[], input_sha256. Device fields: id/model/terminals (terminal->net)/
+parameters (name->{type:number|enum,value}). Flattening, model aliases, terminal
+order, hierarchy scope, resolved expressions and any TB exclusion must be explicit,
+audited private mapping, not guessed by the public detector. No skipped constructs.
+Core validates and compares complete canonical records, including case-sensitive
+numeric scaling, and pins the proof plus both raw artifacts. This is not the
+advisory L2 topology detector, which may warn and skip unsupported devices.
+
+The verification adapter receives this proof and must consume that exact CDL,
+return its source_cdl_sha256, and record the actual native command/source evidence
+in retained reports. No proof/mismatch means no LVS submission. LVS report and
+final certification bind and recheck the proof/artifact hashes. Private parsers
+remain trusted audited code; equality of fabricated or incomplete parser records
+is not a deployment qualification. Source mapping and native consumption need
+real-tool validation, deferred in this follow-up.
+
 Fake tests cover schema injection, grid/limits, owned operations, snapshot/placement
 mismatch, DRC/LVS clean and failures, rule-byte mutation, external directory
 collision and bounded reviewed fixes. They do not certify real Bridge adapters,

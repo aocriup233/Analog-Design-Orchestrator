@@ -77,7 +77,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     if not isinstance(document, dict) or set(document) != {"layout"}:
         raise ValueError("Private layout config must contain only a layout object")
     cfg = document["layout"]
-    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection", "tech_summary", "verification_adapter", "max_fix_iterations"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection", "tech_summary", "verification_adapter", "max_fix_iterations", "lvs_source"}:
         raise ValueError("Unknown layout configuration fields")
     if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
@@ -140,7 +140,22 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
         from .layout_routing import validate_tech
         validate_tech(cfg["tech_summary"])
     manifest = {CONFIG_PATH: hashlib.sha256(data).hexdigest()}
-    for reference in (bridge.get("reader"), bridge.get("operations"), cfg.get("verification_adapter")):
+    source = cfg.get("lvs_source", {})
+    if source:
+        if not isinstance(source, dict) or set(source) != {"generator", "normalizer", "top", "dependencies"}:
+            raise ValueError("lvs_source requires generator, normalizer, top and dependencies")
+        identifier(source["top"], "LVS top", allow_leading_digit=leading)
+        if any(not isinstance(source[k], str) or ":" not in source[k] for k in ("generator", "normalizer")):
+            raise ValueError("LVS generator and normalizer require function references")
+        if not isinstance(source["dependencies"], list) or not all(isinstance(p, str) for p in source["dependencies"]):
+            raise ValueError("LVS mapping dependencies must be declared local paths")
+        for name in source["dependencies"]:
+            path = local_path(root, name)
+            manifest[path.relative_to(root).as_posix()] = stream_sha256(path)
+    elif not isinstance(source, dict):
+        raise ValueError("lvs_source must be an object")
+    for reference in (bridge.get("reader"), bridge.get("operations"), cfg.get("verification_adapter"),
+                      source.get("generator"), source.get("normalizer")):
         if reference is None:
             continue
         if not isinstance(reference, str) or ":" not in reference:

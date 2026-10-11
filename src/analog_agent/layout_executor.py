@@ -19,14 +19,19 @@ from .plugins import load_function
 from .parameters import number_value
 
 OPERATIONS = frozenset({"read_layout_snapshot", "read_terminals", "append_path", "append_via",
-                        "remove_owned_routes", "save_target", "export_verification_snapshot", "verify"})
+                        "remove_owned_routes", "save_target", "export_verification_snapshot", "verify",
+                        "generate_lvs_source", "normalize_lvs_source"})
 
 
 def configured(run, operation):
     if operation not in OPERATIONS:
         raise ValueError("Operation is not in the L0 typed allowlist")
     cfg, project = layout_context(run)
-    reference = cfg.get("verification_adapter") if operation == "verify" else cfg.get("bridge", {}).get("operations")
+    if operation in {"generate_lvs_source", "normalize_lvs_source"}:
+        key = "generator" if operation == "generate_lvs_source" else "normalizer"
+        reference = cfg.get("lvs_source", {}).get(key)
+    else:
+        reference = cfg.get("verification_adapter") if operation == "verify" else cfg.get("bridge", {}).get("operations")
     if not reference:
         raise ValueError("Audited typed adapter is not configured; raw SKILL/shell fallback is forbidden")
     return cfg, project, reference
