@@ -243,6 +243,12 @@ returns proposal JSON. The echo example implements no placement algorithm.
 `floorplan-generate` never applies placement, calls a Bridge operation, freezes
 or routes. A human must make the live layout match the reviewed proposal;
 the existing freeze, L2 check and separate routing-review gates still apply.
+`floorplan-diff` lists target origins/orientations and other live differences,
+without applying changes. `floorplan-score` evaluates deterministic enclosing
+area, aspect ratio, center-based HPWL estimates and L2 symmetry/matching
+compliance for candidate or live placement. Missing connectivity makes HPWL
+incomplete, not deceptively cheap. Axis/style preferences are checked against
+explicitly ID-linked frozen constraints before any generator call.
 No command moves manual instances.
 Plugins and `role_commands` are trusted code/config, not sandboxes; LLM roles
 are restricted to JSON proposals, with no Bridge capability or foundry rules.

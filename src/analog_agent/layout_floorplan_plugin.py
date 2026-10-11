@@ -10,6 +10,7 @@ from .layout_constraints import _pinned, digest, frozen_constraints
 from .layout_executor import execute
 from .layout_floorplan import _attention, _publish, instance_identifier, validate_floorplan
 from .layout_floorplan_rules import RULES_PATH, validate_rules
+from .layout_floorplan_consistency import check_consistency
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
 from .layout_worker import publish
 from .state import status
@@ -89,6 +90,7 @@ def floorplan_generate(run: Path, *, placement: Path | None = None):
             if rule_hash != inputs["private_sha256"][RULES_PATH]:
                 raise LayoutEvidenceError("Floorplan rule bytes changed")
             rules = validate_rules(json.loads(rule_raw), leading=cfg.get("allow_leading_digit", False))
+            consistency = check_consistency(rules, constraints["document"])
             user, entry = None, None
             if placement is not None:
                 path = _private_input(root, placement)
@@ -119,6 +121,7 @@ def floorplan_generate(run: Path, *, placement: Path | None = None):
             candidate_ref = publish(run, "floorplan_candidates", candidate)
             proof = publish(run, "floorplan_generations", {"schema_version": 1,
                 "candidate": candidate_ref,
+                "consistency": consistency,
                 "floorplan": candidate,
                 "candidate_sha256": digest(candidate), "plugin_sha256": plugin_hash,
                 "rules_sha256": rule_hash, "inputs_sha256": context["inputs_sha256"],

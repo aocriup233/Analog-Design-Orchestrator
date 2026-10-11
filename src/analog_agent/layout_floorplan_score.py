@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fractions import Fraction
 import math
+import json
 from pathlib import Path
 
 from .core import local_path, read_json, sha256
@@ -10,6 +11,7 @@ from .layout_constraints import frozen_constraints, topology
 from .layout_floorplan import _attention, _capture, instance_identifier, placement_sha256, EXPORT_STATES
 from .layout_floorplan_diff import reviewed_candidate
 from .layout_floorplan_rules import RULES_PATH, validate_rules
+from .layout_floorplan_consistency import check_consistency
 from .layout_placement_check import check_placement
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
 from .parameters import number_value
@@ -110,7 +112,14 @@ def floorplan_score(run: Path, *, source="candidate"):
                 raise LayoutEvidenceError("Scoring netlist no longer matches the linked simulation")
             graph = topology(raw.decode("utf-8"), cfg.get("detection", {}))
             rules_path = local_path(run.parent.parent, RULES_PATH)
-            rules = validate_rules(read_json(rules_path), leading=cfg.get("allow_leading_digit", False)) if rules_path.exists() else {"targets": {}, "objective_weights": {}}
+            if RULES_PATH in inputs["private_sha256"]:
+                rules_raw = rules_path.read_bytes()
+                if hashlib.sha256(rules_raw).hexdigest() != inputs["private_sha256"][RULES_PATH]:
+                    raise LayoutEvidenceError("Actual scoring rule bytes changed")
+                rules = validate_rules(json.loads(rules_raw), leading=cfg.get("allow_leading_digit", False))
+                check_consistency(rules, constraints["document"])
+            else:
+                rules = {"targets": {}, "objective_weights": {}}
             result = score_floorplan(floorplan, constraints["document"], graph, rules)
             layout_context(run)
             if source == "candidate" and reviewed_candidate(run, cfg) != (floorplan, reference):

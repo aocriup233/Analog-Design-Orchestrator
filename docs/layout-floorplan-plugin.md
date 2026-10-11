@@ -154,3 +154,23 @@ null. Other positive-weight unavailable components also make the cost null;
 no weights gives null. Target range violations are listed separately and do not
 authorize/reject a freeze; optimizers must compare feasibility before cost.
 The function is an evaluation building block, not a placement optimizer.
+
+## Rule/constraint consistency gate
+
+Before loading/calling a generation plugin, check all symmetry_axes and
+matching_patterns against the human-frozen L2 constraint document. Each axis
+id must equal a frozen symmetry constraint id; direction and numeric coordinate
+must agree exactly (equivalent parameter atoms such as 1k and 1000 compare
+equal). Each group_id must bind a frozen matching constraint with the same
+style, including none. Unknown IDs and wrong constraint kinds are errors, not
+unbound global preferences. All detected conflicts are reported together;
+state stays FLOORPLAN_PENDING and no plugin/Bridge call occurs. No constraint
+is implicitly overridden or strengthened. Correct and review the sources in a
+new linked layout run: already-frozen constraints cannot be silently reopened,
+and changing pinned private rules requires a new run.
+
+The generation proof records the consistency check and binds the rule and
+constraint hashes. Scoring uses the same gate and hashes the exact rule bytes
+it evaluates. This checks explicit axis/style conflicts, not the geometric
+satisfiability of every row, guard-ring or keep-out preference; L2 placement
+checks and real DRC/LVS remain necessary.
