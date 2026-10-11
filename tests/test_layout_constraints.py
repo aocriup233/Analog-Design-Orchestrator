@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from analog_agent.core import read_json, write_json
 from analog_agent.layout_constraints import (constraints_draft, detect_constraints, topology,
-                                            validate_constraints)
+                                            validate_constraints, constraints_freeze, frozen_constraints)
 from analog_agent.layout_runs import prepare_layout
 from analog_agent.state import status
 from test_layout_runs import LayoutRunsFixture
@@ -98,3 +98,57 @@ X0 (INP INN TAIL) stage
         with patch("analog_agent.layout_constraints.memory.retrieve", return_value=snapshot):
             result = constraints_draft(self.run)
         self.assertEqual(read_json(self.run / result["path"])["constraints"][0]["source"], "memory:a")
+
+    def test_human_freeze_gate_and_hash_link(self):
+        from analog_agent.layout_runs import layout_lock
+        with self.assertRaises(ValueError):
+            constraints_freeze(self.run, "reviewed")
+        constraints_draft(self.run)
+        with layout_lock(self.run) as held, self.assertRaisesRegex(ValueError, "draft cannot"):
+            frozen_constraints(self.run, session=held)
+        with self.assertRaises(ValueError):
+            constraints_freeze(self.run, " ")
+        result = constraints_freeze(self.run, "human reviewed")
+        self.assertEqual(status(self.run), "FLOORPLAN_PENDING")
+        states = [h["status"] for h in read_json(self.run / "task.json")["history"]]
+        self.assertEqual(states[-2:], ["CONSTRAINTS_FROZEN", "FLOORPLAN_PENDING"])
+        with layout_lock(self.run) as held:
+            frozen = frozen_constraints(self.run, session=held)
+        self.assertEqual(frozen["reference"]["sha256"], result["sha256"])
+        with self.assertRaises(ValueError):
+            constraints_draft(self.run)
+
+    def test_source_change_refuses_old_review_and_can_redraft(self):
+        constraints_draft(self.run)
+        write_json(self.root / "private/layout/constraints.json", {"schema_version": 1, "constraints": [matching()]})
+        with self.assertRaisesRegex(ValueError, "regenerate"):
+            constraints_freeze(self.run, "reviewed")
+        self.assertEqual(status(self.run), "CONSTRAINTS_DRAFTED")
+        constraints_draft(self.run)
+        constraints_freeze(self.run, "reviewed updated source")
+
+    def test_tampered_draft_and_freeze_fail_closed(self):
+        from analog_agent.layout_runs import layout_lock
+        constraints_draft(self.run)
+        write_json(self.run / "layout_constraints.draft.json", {})
+        with self.assertRaises(ValueError):
+            constraints_freeze(self.run, "reviewed")
+        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        other = prepare_layout(self.source)
+        constraints_draft(other)
+        result = constraints_freeze(other, "reviewed")
+        write_json(other / result["path"], {})
+        with layout_lock(other) as held, self.assertRaises(ValueError):
+            frozen_constraints(other, session=held)
+
+    def test_cli_constraints_and_review(self):
+        import io
+        import sys
+        from analog_agent import cli
+        with patch.object(sys, "argv", ["analog-agent", "layout", "constraints", str(self.run)]), \
+             patch("sys.stdout", new_callable=io.StringIO):
+            self.assertEqual(cli.main(), 0)
+        with patch.object(sys, "argv", ["analog-agent", "layout", "constraints-freeze", str(self.run), "--reason", "reviewed"]), \
+             patch("sys.stdout", new_callable=io.StringIO) as output:
+            self.assertEqual(cli.main(), 0)
+            self.assertIn("FLOORPLAN_PENDING", output.getvalue())

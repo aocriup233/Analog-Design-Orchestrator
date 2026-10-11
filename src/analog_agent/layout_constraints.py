@@ -287,3 +287,69 @@ def constraints_draft(run: Path):
         else:
             update_status(run, status(run), constraints_draft=ref)
         return {**ref, "status": status(run), "count": len(document["constraints"])}
+
+
+def _pinned(run, reference):
+    try:
+        path = local_path(run, reference["path"])
+        raw = path.read_bytes()
+        if hashlib.sha256(raw).hexdigest() != reference["sha256"]:
+            raise ValueError("Constraint receipt hash mismatch")
+        return json.loads(raw)
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise LayoutEvidenceError("Pinned constraint evidence is missing or changed") from exc
+
+
+def _constraint_attention(run, exc):
+    if isinstance(exc, LayoutEvidenceError) and status(run) != "NEEDS_ATTENTION":
+        transition(run, "NEEDS_ATTENTION", error={"kind": "LayoutEvidenceError",
+                   "message": "Constraint evidence changed; inspect linked inputs before continuing"})
+
+
+def constraints_freeze(run: Path, reason: str):
+    run = layout_path(run)
+    if not isinstance(reason, str) or not reason.strip():
+        raise ValueError("Constraints freeze requires a human review reason")
+    with layout_lock(run):
+        if status(run) != "CONSTRAINTS_DRAFTED":
+            raise ValueError("Constraints freeze requires CONSTRAINTS_DRAFTED")
+        try:
+            task = read_json(local_path(run, "task.json"))
+            draft = _pinned(run, task.get("constraints_draft"))
+            _, current = _inputs(run)
+            if draft != current:
+                # Inputs may be deliberately revised while still at the draft gate.
+                # Refresh via constraints, then review; never freeze the old draft.
+                raise ValueError("Constraint sources changed; regenerate and review the draft")
+            receipt = {"document": draft, "draft_sha256": task["constraints_draft"]["sha256"],
+                       "reason": reason.strip(), "frozen_at": utc_now()}
+            path = local_path(run, f"constraint_freezes/{uuid.uuid4().hex}.json")
+            write_json(path, receipt)
+            ref = {"path": path.relative_to(run).as_posix(), "sha256": sha256(path)}
+            transition(run, "CONSTRAINTS_FROZEN", active_constraints_freeze=ref)
+            transition(run, "FLOORPLAN_PENDING")
+            return {**ref, "status": status(run), "count": len(draft["constraints"])}
+        except Exception as exc:
+            _constraint_attention(run, exc)
+            raise
+
+
+def frozen_constraints(run: Path, *, session):
+    """Lock-held verification; drafts never satisfy this handoff."""
+    session.require(run)
+    cfg, _ = layout_context(run)
+    task = read_json(local_path(run, "task.json"))
+    ref = task.get("active_constraints_freeze")
+    if not isinstance(ref, dict):
+        raise ValueError("No active human-reviewed constraint freeze; draft cannot be used")
+    try:
+        receipt = _pinned(run, ref)
+        document = receipt["document"]
+        validate_constraints({k: document[k] for k in ("schema_version", "constraints")},
+                             leading=cfg.get("allow_leading_digit", False))
+        _, current = _inputs(run)
+        if document != current or not isinstance(receipt["reason"], str) or not receipt["reason"].strip():
+            raise LayoutEvidenceError("Frozen constraint sources changed")
+        return {"document": document, "reference": ref}
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        raise LayoutEvidenceError("Frozen constraints are invalid or their sources changed") from exc

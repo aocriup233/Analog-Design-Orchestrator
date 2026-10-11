@@ -52,3 +52,20 @@ ID to override detection. Stable IDs and sorting make draft bytes deterministic.
 The draft records netlist, derived hierarchy, user-file, layout-input and memory
 selection/source hashes. Rule and private configuration contents are never
 copied into public repository files or prompts.
+
+## Human review gate
+
+`analog-agent layout constraints RUN` publishes deterministic
+`layout_constraints.draft.json`, records its SHA-256 and enters
+CONSTRAINTS_DRAFTED. It may be regenerated only while still at this gate.
+`analog-agent layout constraints-freeze RUN --reason TEXT` rechecks the pinned
+draft and all sources, writes an immutable hashed receipt under
+`constraint_freezes/`, records CONSTRAINTS_FROZEN and then FLOORPLAN_PENDING.
+The explicit command is the human approval, not an automatic worker decision.
+Editing the draft directly is tampering; revise the private user file and
+regenerate before approving. A changed user/memory source refuses stale review.
+Tampered pinned evidence enters NEEDS_ATTENTION. Input/schema errors leave
+the current state unchanged. After freezing, changes require a new linked run;
+drafts and inherited evidence never grant active approval. Later consumers
+must verify the frozen receipt and source hashes under one layout lock and
+include its SHA-256 in their own handoff. No command runs routing or DRC/LVS.
