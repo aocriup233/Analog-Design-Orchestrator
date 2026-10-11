@@ -114,6 +114,8 @@ def main() -> int:
         action.add_argument("run", type=Path)
         if name in {"floorplan-freeze", "constraints-freeze"}:
             action.add_argument("--reason", required=True, help="Human review rationale")
+        if name == "constraints-freeze":
+            action.add_argument("--ack-warnings", action="store_true", help="Explicitly accept current draft warnings and coverage")
         if name == "floorplan-check":
             action.add_argument("--before", choices=["routing", "verification"], required=True)
     worker = sub.add_parser("worker", help=argparse.SUPPRESS)
@@ -226,7 +228,7 @@ def main() -> int:
         elif args.layout_command == "constraints":
             output = constraints_draft(args.run)
         elif args.layout_command == "constraints-freeze":
-            output = constraints_freeze(args.run, args.reason)
+            output = constraints_freeze(args.run, args.reason, ack_warnings=args.ack_warnings)
         elif args.layout_command == "constraints-check":
             output = floorplan_constraints_check(args.run)
         elif args.layout_command == "floorplan-freeze":

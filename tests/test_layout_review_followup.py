@@ -35,3 +35,18 @@ class DraftReviewTest(LayoutConstraintsFixture):
         self.assertEqual(graph["coverage"]["skipped_hierarchy"], 1)
         self.assertEqual(graph["coverage"]["unmapped_devices"], 1)
         self.assertEqual(graph["coverage"]["mapped_devices"], 1)
+
+    def test_warning_freeze_requires_explicit_ack_and_pins_warning_set(self):
+        from analog_agent.layout_constraints import constraints_freeze, digest
+        from analog_agent.state import status
+        snapshot = {"entries": [{"id": "broken", "kind": "layout_constraints", "summary": "{"}]}
+        with patch("analog_agent.layout_constraints.memory.retrieve", return_value=snapshot):
+            constraints_draft(self.run)
+            with self.assertRaisesRegex(ValueError, "ack-warnings"):
+                constraints_freeze(self.run, "reason alone is insufficient")
+            self.assertEqual(status(self.run), "CONSTRAINTS_DRAFTED")
+            ref = constraints_freeze(self.run, "reviewed coverage and rejected memory", ack_warnings=True)
+        receipt = read_json(self.run / ref["path"])
+        self.assertTrue(receipt["ack_warnings"])
+        self.assertEqual(receipt["warnings_sha256"], digest(receipt["document"]["warnings"]))
+        self.assertEqual(receipt["coverage_sha256"], digest(receipt["document"]["coverage"]))

@@ -79,6 +79,9 @@ CONSTRAINTS_DRAFTED. It may be regenerated only while still at this gate.
 draft and all sources, writes an immutable hashed receipt under
 `constraint_freezes/`, records CONSTRAINTS_FROZEN and then FLOORPLAN_PENDING.
 The explicit command is the human approval, not an automatic worker decision.
+If the draft has unresolved warnings, `--ack-warnings` is additionally required;
+a reason alone is insufficient. The receipt pins the exact warning-set and
+coverage hashes and records the acknowledgment. It never waives orphan errors.
 Editing the draft directly is tampering; revise the private user file and
 regenerate before approving. A changed user/memory source refuses stale review.
 Tampered pinned evidence enters NEEDS_ATTENTION. Input/schema errors leave

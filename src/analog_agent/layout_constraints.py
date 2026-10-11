@@ -376,7 +376,7 @@ def _constraint_attention(run, exc):
                    "message": "Constraint evidence changed; inspect linked inputs before continuing"})
 
 
-def constraints_freeze(run: Path, reason: str):
+def constraints_freeze(run: Path, reason: str, *, ack_warnings: bool = False):
     run = layout_path(run)
     if not isinstance(reason, str) or not reason.strip():
         raise ValueError("Constraints freeze requires a human review reason")
@@ -391,8 +391,14 @@ def constraints_freeze(run: Path, reason: str):
                 # Inputs may be deliberately revised while still at the draft gate.
                 # Refresh via constraints, then review; never freeze the old draft.
                 raise ValueError("Constraint sources changed; regenerate and review the draft")
+            if type(ack_warnings) is not bool:
+                raise ValueError("ack_warnings must be boolean")
+            if draft["warnings"] and not ack_warnings:
+                raise ValueError("Unresolved draft warnings require --ack-warnings after coverage review")
             receipt = {"document": draft, "draft_sha256": task["constraints_draft"]["sha256"],
-                       "reason": reason.strip(), "frozen_at": utc_now()}
+                       "reason": reason.strip(), "frozen_at": utc_now(),
+                       "ack_warnings": ack_warnings, "warnings_sha256": digest(draft["warnings"]),
+                       "coverage_sha256": digest(draft["coverage"])}
             path = local_path(run, f"constraint_freezes/{uuid.uuid4().hex}.json")
             write_json(path, receipt)
             ref = {"path": path.relative_to(run).as_posix(), "sha256": sha256(path)}
@@ -420,6 +426,11 @@ def frozen_constraints(run: Path, *, session):
         _, current = _inputs(run)
         if document != current or not isinstance(receipt["reason"], str) or not receipt["reason"].strip():
             raise LayoutEvidenceError("Frozen constraint sources changed")
+        if (type(receipt.get("ack_warnings")) is not bool or
+                (document["warnings"] and not receipt["ack_warnings"]) or
+                receipt.get("warnings_sha256") != digest(document["warnings"]) or
+                receipt.get("coverage_sha256") != digest(document["coverage"])):
+            raise LayoutEvidenceError("Frozen constraint warning/coverage acknowledgment is missing")
         return {"document": document, "reference": ref}
     except (ValueError, OSError, KeyError, TypeError) as exc:
         raise LayoutEvidenceError("Frozen constraints are invalid or their sources changed") from exc
