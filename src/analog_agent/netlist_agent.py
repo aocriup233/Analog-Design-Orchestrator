@@ -61,7 +61,7 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
         block_text = _render(block_source, values, cfg.get("parameters", {}))
     elif block.get("adapter"):
         function = load_function(block["adapter"], root, cfg)
-        generated = Path(function(cfg, task, run, values)).resolve()
+        generated = local_path(run, str(function(cfg, task, run, values)))
         if not generated.is_file():
             raise FileNotFoundError(generated)
         block_text = generated.read_text(encoding="utf-8")
@@ -109,7 +109,7 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
         bench_text = _render(bench_source, values, cfg.get("parameters", {}))
     else:
         function = load_function(bench["generator"], root, cfg)
-        bench_source = Path(function(cfg, task, run, values, block["name"], block["pins"])).resolve()
+        bench_source = local_path(run, str(function(cfg, task, run, values, block["name"], block["pins"])))
         if not bench_source.is_file():
             raise FileNotFoundError(bench_source)
         bench_text = bench_source.read_text(encoding="utf-8")
@@ -160,7 +160,7 @@ def prepare(run: Path) -> dict:
     generator = cfg.get("netlist", {}).get("generator")
     if generator:
         function = load_function(generator, Path(cfg["_project_root"]), cfg)
-        source = Path(function(cfg, task, run)).resolve()
+        source = local_path(run, str(function(cfg, task, run)))
         if not source.is_file():
             raise FileNotFoundError(source)
         if source != dest:
