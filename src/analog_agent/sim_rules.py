@@ -21,12 +21,12 @@ def _atom(value: Any, field: str) -> str:
     return string
 
 
-def render_rule(rule: dict[str, Any], project_root: Path | None = None) -> str:
+def render_rule(rule: dict[str, Any], project_root: Path | None = None, config: dict | None = None) -> str:
     kind = rule.get("kind")
     if kind == "python":
         if project_root is None:
             raise ValueError("Custom analysis rule needs a project root")
-        function = load_function(rule["function"], project_root)
+        function = load_function(rule["function"], project_root, config)
         statement = str(function(rule)).strip()
         if not statement:
             raise ValueError("Custom analysis rule returned an empty statement")
@@ -67,7 +67,7 @@ def build_deck(design: Path, config: dict[str, Any], run: Path) -> dict[str, Any
         rule = read_json(path)
         rules.append({"path": str(path), "sha256": sha256(path),
                       "kind": rule.get("kind"), "name": rule.get("name")})
-    statements = [render_rule(read_json(Path(item["path"])), root) for item in rules]
+    statements = [render_rule(read_json(Path(item["path"])), root, config) for item in rules]
     if len({line.split()[0] for line in statements}) != len(statements):
         raise ValueError("Duplicate analysis names")
     signals = simulation.get("save_signals", [])

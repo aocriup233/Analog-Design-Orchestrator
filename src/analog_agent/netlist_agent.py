@@ -60,7 +60,7 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
     if block["kind"] == "source":
         block_text = _render(block_source, values)
     elif block.get("adapter"):
-        function = load_function(block["adapter"], root)
+        function = load_function(block["adapter"], root, cfg)
         generated = Path(function(cfg, task, run, values)).resolve()
         if not generated.is_file():
             raise FileNotFoundError(generated)
@@ -94,7 +94,7 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
             raise ValueError("Block model bundle markers must occur exactly once")
         start = block_text.index(begin)
         finish = block_text.index(end, start) + len(end)
-        rendered = load_function(bundle["renderer"], root)(read_json(config_path))
+        rendered = load_function(bundle["renderer"], root, cfg)(read_json(config_path))
         if (not isinstance(rendered, str) or not rendered.startswith(begin + "\n")
                 or not rendered.endswith("\n" + end)
                 or rendered.count(begin) != 1 or rendered.count(end) != 1):
@@ -108,7 +108,7 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
         bench_source = local_path(root, bench["path"])
         bench_text = _render(bench_source, values)
     else:
-        function = load_function(bench["generator"], root)
+        function = load_function(bench["generator"], root, cfg)
         bench_source = Path(function(cfg, task, run, values, block["name"], block["pins"])).resolve()
         if not bench_source.is_file():
             raise FileNotFoundError(bench_source)
@@ -158,7 +158,7 @@ def prepare(run: Path) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     generator = cfg.get("netlist", {}).get("generator")
     if generator:
-        function = load_function(generator, Path(cfg["_project_root"]))
+        function = load_function(generator, Path(cfg["_project_root"]), cfg)
         source = Path(function(cfg, task, run)).resolve()
         if not source.is_file():
             raise FileNotFoundError(source)

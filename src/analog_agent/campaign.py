@@ -787,7 +787,7 @@ def propose(campaign: Path) -> dict:
                "project_config": str(_project_config_path(campaign, manifest)),
                "latest_comparison": read_json(comparison_path) if comparison_path else None,
                "memory": memory}
-    result = load_function(specification, Path(cfg["_project_root"]))(context)
+    result = load_function(specification, Path(cfg["_project_root"]), cfg)(context)
     if not isinstance(result, dict):
         raise TypeError("Campaign proposer must return an object with points")
     _validate_points(manifest, result, cfg)

@@ -16,7 +16,8 @@ def _magnitude(value):
     return abs(float(value))
 
 
-def extract(data: dict, definition: dict, run: Path | None = None, project_root: Path | None = None) -> float:
+def extract(data: dict, definition: dict, run: Path | None = None, project_root: Path | None = None,
+            config: dict | None = None) -> float:
     kind = definition["kind"]
     if kind == "scalar":
         value = data[definition["key"]]
@@ -34,7 +35,7 @@ def extract(data: dict, definition: dict, run: Path | None = None, project_root:
     if kind == "python":
         if run is None or project_root is None:
             raise ValueError("Python metric needs run and project root")
-        function = load_function(definition["function"], project_root)
+        function = load_function(definition["function"], project_root, config)
         return float(function(data, definition, run))
     raise ValueError(f"Unsupported metric kind: {kind}")
 
@@ -47,7 +48,7 @@ def analyze(run: Path) -> dict:
         raise ValueError("Simulation has not completed successfully")
     if status(run) != "VERIFIED":
         raise ValueError("Simulation results have not reached VERIFIED state")
-    metrics = {name: extract(sim["data"], definition, run, Path(cfg["_project_root"]))
+    metrics = {name: extract(sim["data"], definition, run, Path(cfg["_project_root"]), cfg)
                for name, definition in cfg.get("metrics", {}).items()}
     verdicts = {}
     for name, rule in cfg.get("rules", {}).items():

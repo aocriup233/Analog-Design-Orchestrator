@@ -102,7 +102,7 @@ class LSFBackend:
 
     def __init__(self, config: dict, run: Path):
         spec = config["simulation"]["adapter"]
-        factory = load_function(spec, Path(config["_project_root"]))
+        factory = load_function(spec, Path(config["_project_root"]), config)
         self.adapter = factory(config, run)
 
     def _call(self, name: str, *args) -> dict:
