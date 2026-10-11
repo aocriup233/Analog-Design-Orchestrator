@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -21,15 +23,17 @@ def _atom(value: Any, field: str) -> str:
     return string
 
 
-def render_rule(rule: dict[str, Any], project_root: Path | None = None) -> str:
+def render_rule(rule: dict[str, Any], project_root: Path | None = None, config: dict | None = None) -> str:
     kind = rule.get("kind")
     if kind == "python":
         if project_root is None:
             raise ValueError("Custom analysis rule needs a project root")
-        function = load_function(rule["function"], project_root)
-        statement = str(function(rule)).strip()
-        if not statement:
-            raise ValueError("Custom analysis rule returned an empty statement")
+        function = load_function(rule["function"], project_root, config)
+        statement = str(function(rule))
+        if (not statement.strip() or any(char in statement for char in ("\n", "\r", "\\", ";"))
+                or re.search(r"\b(?:include|ahdl_include)\b|\bsimulator\s+lang\b", statement, re.I)):
+            raise ValueError("Custom analysis rule must return a single-line analysis statement, not includes or language changes")
+        statement = statement.strip()
         return statement
     if kind not in {"dc", "ac", "tran", "stb"}:
         raise ValueError(f"Unsupported analysis kind: {kind}")
@@ -62,12 +66,14 @@ def build_deck(design: Path, config: dict[str, Any], run: Path) -> dict[str, Any
     if not paths:
         raise ValueError("simulation.rules is empty")
     rules = []
+    statements = []
     for relative in paths:
         path = local_path(root, relative)
-        rule = read_json(path)
-        rules.append({"path": str(path), "sha256": sha256(path),
+        content = path.read_bytes()
+        rule = json.loads(content.decode("utf-8"))
+        rules.append({"path": str(path), "sha256": hashlib.sha256(content).hexdigest(),
                       "kind": rule.get("kind"), "name": rule.get("name")})
-    statements = [render_rule(read_json(Path(item["path"])), root) for item in rules]
+        statements.append(render_rule(rule, root, config))
     if len({line.split()[0] for line in statements}) != len(statements):
         raise ValueError("Duplicate analysis names")
     signals = simulation.get("save_signals", [])

@@ -23,6 +23,7 @@ from typing import Any
 from .core import (create_run, load_config, local_path, private_manifest, read_json,
                    run_config, sha256, utc_now, write_json)
 from .plugins import load_function
+from .parameters import validate_value
 from .memory import brief_view as memory_brief_view, retrieve as retrieve_memory
 from .state import status as run_status
 from .workflow import cleanup, invoke_role
@@ -247,10 +248,7 @@ def _validate_points(manifest: dict, payload: dict, cfg: dict) -> list[dict]:
             value = point["parameters"].get(name, definition.get("initial"))
             if value is None or isinstance(value, (dict, list, bool)):
                 raise ValueError(f"Point {point_id} needs a scalar value for {name}")
-            value = str(value)
-            if "\n" in value or "\r" in value or "@" in value:
-                raise ValueError(f"Unsafe value for {name} in {point_id}")
-            values[name] = value
+            values[name] = validate_value(name, value, definition)
         testbench = point.get("testbench")
         benches = cfg.get("netlist", {}).get("testbenches", {})
         if testbench is not None and testbench not in benches:
@@ -652,6 +650,7 @@ def run_until_review(campaign: Path, max_seconds: int = 3600) -> dict:
     if max_seconds < 1:
         raise ValueError("max_seconds must be positive")
     deadline = time.monotonic() + max_seconds
+    previous = None
     while True:
         report = step(campaign)
         draining = (report["status"] == "NEEDS_ATTENTION" and
@@ -663,9 +662,10 @@ def run_until_review(campaign: Path, max_seconds: int = 3600) -> dict:
             return report
         waiting_on_job = any(point["state"] in {"SUBMITTED", "RUN"}
                              for point in report["cycles"][-1]["points"])
-        if waiting_on_job:
-            interval = report["policy"]["poll_interval_s"]
-            time.sleep(min(interval, max(0, deadline - time.monotonic())))
+        if waiting_on_job or report == previous:
+            interval = max(1.0, float(report["policy"]["poll_interval_s"]))
+            time.sleep(max(1.0, min(interval, max(0, deadline - time.monotonic()))))
+        previous = report
 
 
 def pause(campaign: Path) -> dict:
@@ -772,6 +772,12 @@ def retire(campaign: Path, reason: str, superseded_by: Path | None = None) -> di
 
 def propose(campaign: Path) -> dict:
     """Call an optional user-owned proposer; never auto-submit its suggestion."""
+    campaign = campaign.resolve()
+    with _lock(campaign):
+        return _propose_locked(campaign)
+
+
+def _propose_locked(campaign: Path) -> dict:
     manifest = _manifest(campaign)
     if manifest["status"] not in {"AWAITING_POINTS", "REVIEW"}:
         raise ValueError("Proposals are accepted only at a decision boundary")
@@ -787,7 +793,7 @@ def propose(campaign: Path) -> dict:
                "project_config": str(_project_config_path(campaign, manifest)),
                "latest_comparison": read_json(comparison_path) if comparison_path else None,
                "memory": memory}
-    result = load_function(specification, Path(cfg["_project_root"]))(context)
+    result = load_function(specification, Path(cfg["_project_root"]), cfg)(context)
     if not isinstance(result, dict):
         raise TypeError("Campaign proposer must return an object with points")
     _validate_points(manifest, result, cfg)

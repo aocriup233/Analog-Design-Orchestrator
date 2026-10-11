@@ -5,6 +5,7 @@ from __future__ import annotations
 import shutil
 import subprocess
 import sys
+import math
 from pathlib import Path
 
 from .core import create_run, read_json, run_config, sha256, update_status, utc_now, write_json
@@ -104,6 +105,9 @@ def invoke_role(role: str, run: Path) -> dict:
     """Each role runs in a separate Python process; JSON files are its contract."""
     cfg = run_config(run)
     configured = cfg.get("workflow", {}).get("role_commands", {}).get(role)
+    timeout = float(cfg.get("workflow", {}).get("role_timeout_s", 3600))
+    if not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("workflow.role_timeout_s must be finite and positive")
     if configured is not None:
         if not isinstance(configured, list) or not configured or not all(isinstance(x, str) for x in configured):
             raise ValueError(f"workflow.role_commands.{role} must be a nonempty argument array")
@@ -112,7 +116,7 @@ def invoke_role(role: str, run: Path) -> dict:
         command = [sys.executable, "-m", "analog_agent.cli", "worker", role, str(run)]
     completed = subprocess.run(
         command,
-        capture_output=True, text=True,
+        capture_output=True, text=True, timeout=timeout,
     )
     if completed.returncode:
         raise RuntimeError(
@@ -131,6 +135,8 @@ def invoke_role(role: str, run: Path) -> dict:
 
 def cleanup(run: Path) -> bool:
     run = run.resolve()
+    if read_json(run / "task.json").get("status") != "ANALYZED":
+        raise ValueError("Raw cleanup requires ANALYZED status")
     if not (run / "analysis_result.json").is_file():
         raise ValueError("Analysis result must exist before raw cleanup")
     raw = (run / "raw").resolve()

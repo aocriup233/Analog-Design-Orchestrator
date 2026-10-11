@@ -2,6 +2,34 @@
 
 **An evidence-driven workflow for analog IC design, simulation, and analysis.**
 
+Role processes have a finite `workflow.role_timeout_s` timeout (default 3600 seconds).
+`workflow.role_commands` is a **trusted configuration-level execution hook**, not
+an untrusted proposal interface: its argument arrays can execute arbitrary programs.
+Only project owners should edit it. A timed-out submission must be reconciled,
+not blindly retried; terminating a worker does not cancel a scheduler job.
+
+JSON handoffs fsync the temporary file before atomic replacement, and fsync the
+containing directory before and after replacement on POSIX. Windows does not
+provide POSIX directory fsync: file contents are flushed there, but directory
+entry durability across power loss is not guaranteed by this Python API.
+
+Security defaults: module plugins must match `plugins.allowed_modules` (default
+`["analog_agent.proposers"]`, including its submodules). Project-local `.py`
+plugins remain trusted executable code. Dangerous standard-library callable
+origins are rejected even through local aliases. `simulation.spectre_cmd` must
+be a single absolute executable path or an allowed command name from
+`simulation.allowed_spectre_commands` (default `["spectre"]`); wrapper command
+strings and whitespace are not accepted. The audited bridge source uses
+argument-array subprocess calls, not `shell=True`; deployments must audit/pin
+their optional bridge dependency as well. LSF requires `remote_sha256` by
+default; explicit `simulation.require_remote_sha256: false` is a compatibility
+opt-out, not equivalent verification. Relative result paths are run-relative.
+
+`ac_db_at` rejects targets outside the recorded sweep. Its optional
+`"interpolate": true` linearly interpolates dB magnitude versus log frequency;
+the default still chooses the nearest sample. Campaign proposal generation is
+serialized with campaign mutations; idle campaign loops wait at least one second.
+
 [简体中文](README.zh-CN.md)
 
 ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory.

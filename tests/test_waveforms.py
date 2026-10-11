@@ -79,6 +79,25 @@ class WaveformTest(unittest.TestCase):
                                "representation": "phase_deg"}, self.root)
         self.assertEqual(list(phase), [90.0, 180.0])
 
+    def test_paths_and_overwrite(self):
+        source = {"path": "../wave.csv", "x": "time", "y": "out"}
+        with self.assertRaisesRegex(ValueError, "escapes"):
+            load_trace(source, self.root)
+        for key in ("output", "spectrum_csv"):
+            config = {"operation": "fft", "source": {**source, "path": "wave.csv"},
+                      "output": "plot.png", key: "../escape.csv"}
+            path = self.root / "request.json"
+            path.write_text(json.dumps(config))
+            with self.assertRaisesRegex(ValueError, "escapes"):
+                run_waveform_config(path)
+        self._run("fft", {}, "existing.png")
+        with self.assertRaises(FileExistsError):
+            self._run("fft", {}, "existing.png")
+        config = json.loads((self.root / "request.json").read_text())
+        config["overwrite"] = True
+        (self.root / "request.json").write_text(json.dumps(config))
+        run_waveform_config(self.root / "request.json")
+
 
 if __name__ == "__main__":
     unittest.main()

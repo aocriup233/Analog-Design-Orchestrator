@@ -9,6 +9,7 @@ from pathlib import Path
 from .analysis_agent import analyze
 from . import campaign as campaign_flow
 from .core import create_run, load_config, read_json, run_config
+from .parameters import validate_values
 from . import memory as project_memory
 from .netlist_agent import prepare
 from .replay import replay as replay_history
@@ -104,6 +105,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.command == "new":
         overrides = dict(item.split("=", 1) for item in args.set)
+        overrides = validate_values(overrides, load_config(args.config).get("parameters", {}))
         run = create_run(args.config, args.iteration, overrides, args.testbench)
         invoke_role("netlist", run)
         output = {"run": str(run), "netlist": read_json(run / "netlist_result.json")}

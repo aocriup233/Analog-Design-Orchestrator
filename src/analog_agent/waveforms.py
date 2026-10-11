@@ -12,6 +12,24 @@ import math
 from pathlib import Path
 from typing import Any
 
+from .core import local_path
+
+
+def _output_path(root: Path, config: dict, key: str) -> Path | None:
+    """The request's directory is its analysis workspace (or run directory)."""
+    if not config.get(key):
+        return None
+    output = local_path(root, config[key])
+    if output.exists() and config.get("overwrite") is not True:
+        raise FileExistsError(f"Output exists; set overwrite=true: {output}")
+    return output
+
+
+def _save_plot(fig, output: Path, config: dict) -> None:
+    output.parent.mkdir(parents=True, exist_ok=True)
+    with output.open("wb" if config.get("overwrite") is True else "xb") as stream:
+        fig.savefig(stream, format=output.suffix.lstrip("."), dpi=int(config.get("dpi", 150)))
+
 
 def _np():
     import numpy as np
@@ -47,7 +65,7 @@ def _real_value(value: Any, representation: str) -> float:
 def load_trace(source: dict[str, Any], root: Path):
     """Return sorted x/y NumPy arrays from CSV or simulation_result.json."""
     np = _np()
-    path = (root / source["path"]).resolve()
+    path = local_path(root, source["path"])
     if not path.is_file():
         raise FileNotFoundError(path)
     x_key, y_key = source["x"], source["y"]
@@ -157,7 +175,10 @@ def run_waveform_config(path: Path) -> dict[str, Any]:
     root = path.parent
     operation = config["operation"]
     options = config.get("options", {})
-    output = (root / config["output"]).resolve() if config.get("output") else None
+    output = _output_path(root, config, "output")
+    spectrum_path = _output_path(root, config, "spectrum_csv")
+    if output is not None and output == spectrum_path:
+        raise ValueError("output and spectrum_csv must be distinct")
     if operation == "overlay" and config.get("sources"):
         fig, axis = plt.subplots(figsize=(8, 4.5))
         count = 0
@@ -173,7 +194,7 @@ def run_waveform_config(path: Path) -> dict[str, Any]:
             raise ValueError("Multi-trace overlay needs output path")
         output.parent.mkdir(parents=True, exist_ok=True)
         fig.tight_layout()
-        fig.savefig(output, dpi=int(config.get("dpi", 150)))
+        _save_plot(fig, output, config)
         plt.close(fig)
         return {"operation": operation, "traces": count, "plot": str(output)}
     x, y = load_trace(config["source"], root)
@@ -229,9 +250,8 @@ def run_waveform_config(path: Path) -> dict[str, Any]:
             window=options.get("window", "hann"), remove_mean=options.get("remove_mean", True))
         result["spectrum"] = details
         if config.get("spectrum_csv"):
-            spectrum_path = (root / config["spectrum_csv"]).resolve()
             spectrum_path.parent.mkdir(parents=True, exist_ok=True)
-            with spectrum_path.open("w", newline="", encoding="utf-8") as stream:
+            with spectrum_path.open("w" if config.get("overwrite") is True else "x", newline="", encoding="utf-8") as stream:
                 writer = csv.writer(stream)
                 writer.writerow(["frequency_hz", "amplitude", "amplitude_db"])
                 writer.writerows((float(f), float(a), float(20 * np.log10(max(a, 1e-30))))
@@ -249,7 +269,7 @@ def run_waveform_config(path: Path) -> dict[str, Any]:
             raise ValueError("Plot operation needs output path")
         output.parent.mkdir(parents=True, exist_ok=True)
         fig.tight_layout()
-        fig.savefig(output, dpi=int(config.get("dpi", 150)))
+        _save_plot(fig, output, config)
         plt.close(fig)
         result["plot"] = str(output)
     return result

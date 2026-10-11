@@ -5,12 +5,16 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
+from unittest.mock import patch, Mock
 from pathlib import Path
 
 from analog_agent.analysis_agent import analyze
 from analog_agent.core import create_run, read_json, write_json
 from analog_agent.netlist_agent import prepare
-from analog_agent.simulation_agent import cleanup_remote, resume, simulate, submit
+from analog_agent.simulation_agent import cleanup_remote, resume, simulate, submit, stage, _config_and_netlist
 from analog_agent.state import status, transition
 
 
@@ -120,6 +124,34 @@ class LSFBackendTest(unittest.TestCase):
         self.assertEqual(cli("resume", run)["status"], "RUN")
         self.assertEqual(cli("resume", run)["status"], "DONE")
         self.assertEqual(cli("analyze", run)["status"], "PASS")
+
+    def test_concurrent_submit_claims_intent_once(self):
+        run = create_run(self.config, 0)
+        prepare(run)
+        stage(run)
+        configuration = _config_and_netlist(run)
+        barrier = threading.Barrier(2)
+        backend = Mock()
+        def config_and_netlist(_run):
+            barrier.wait(timeout=5)
+            return configuration
+        def backend_submit(*args):
+            time.sleep(0.1)
+            return {"state": "SUBMITTED", "job_id": "42"}
+        backend.submit.side_effect = backend_submit
+        def attempt():
+            try:
+                return submit(run)["status"]
+            except ValueError as error:
+                return str(error)
+        with patch("analog_agent.simulation_agent._config_and_netlist", side_effect=config_and_netlist), \
+                patch("analog_agent.simulation_agent.backend_for", return_value=backend), \
+                ThreadPoolExecutor(max_workers=2) as pool:
+            outcomes = list(pool.map(lambda _: attempt(), range(2)))
+        backend.submit.assert_called_once()
+        self.assertIn("SUBMITTED", outcomes)
+        self.assertTrue(any("outcome unknown" in value for value in outcomes))
+        self.assertEqual(read_json(run / "submission_intent.json")["run_id"], run.name)
 
 
 if __name__ == "__main__":

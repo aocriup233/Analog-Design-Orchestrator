@@ -10,17 +10,17 @@ from pathlib import Path
 from .core import local_path, read_json, run_config, sha256, utc_now, write_json
 from .plugins import load_function
 from .state import transition
+from .parameters import validate_values
 
 
-def _render(source: Path, values: dict[str, str]) -> str:
+def _render(source: Path, values: dict[str, str], definitions: dict | None = None) -> str:
+    values = validate_values(values, definitions)
     text = source.read_text(encoding="utf-8")
     tokens = set(re.findall(r"@@([A-Za-z][A-Za-z0-9_]*)@@", text))
     unknown = tokens - values.keys()
     if unknown:
         raise ValueError(f"Missing parameter definitions: {sorted(unknown)}")
     for name, value in values.items():
-        if "\n" in value or "\r" in value or "@" in value:
-            raise ValueError(f"Unsafe value for {name}")
         text = text.replace(f"@@{name}@@", value)
     if re.search(r"@@[A-Za-z][A-Za-z0-9_]*@@", text):
         raise ValueError("Unresolved placeholders")
@@ -58,10 +58,10 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
         location = adapter.rsplit(":", 1)[0]
         dependencies[location] = sha256(local_path(root, location))
     if block["kind"] == "source":
-        block_text = _render(block_source, values)
+        block_text = _render(block_source, values, cfg.get("parameters", {}))
     elif block.get("adapter"):
-        function = load_function(block["adapter"], root)
-        generated = Path(function(cfg, task, run, values)).resolve()
+        function = load_function(block["adapter"], root, cfg)
+        generated = local_path(run, str(function(cfg, task, run, values)))
         if not generated.is_file():
             raise FileNotFoundError(generated)
         block_text = generated.read_text(encoding="utf-8")
@@ -94,7 +94,7 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
             raise ValueError("Block model bundle markers must occur exactly once")
         start = block_text.index(begin)
         finish = block_text.index(end, start) + len(end)
-        rendered = load_function(bundle["renderer"], root)(read_json(config_path))
+        rendered = load_function(bundle["renderer"], root, cfg)(read_json(config_path))
         if (not isinstance(rendered, str) or not rendered.startswith(begin + "\n")
                 or not rendered.endswith("\n" + end)
                 or rendered.count(begin) != 1 or rendered.count(end) != 1):
@@ -106,10 +106,10 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
     block_dest.write_text(block_text.rstrip() + "\n", encoding="utf-8")
     if "path" in bench:
         bench_source = local_path(root, bench["path"])
-        bench_text = _render(bench_source, values)
+        bench_text = _render(bench_source, values, cfg.get("parameters", {}))
     else:
-        function = load_function(bench["generator"], root)
-        bench_source = Path(function(cfg, task, run, values, block["name"], block["pins"])).resolve()
+        function = load_function(bench["generator"], root, cfg)
+        bench_source = local_path(run, str(function(cfg, task, run, values, block["name"], block["pins"])))
         if not bench_source.is_file():
             raise FileNotFoundError(bench_source)
         bench_text = bench_source.read_text(encoding="utf-8")
@@ -149,6 +149,7 @@ def prepare(run: Path) -> dict:
         if name not in values:
             raise ValueError(f"Unknown parameter override: {name}")
         values[name] = str(value)
+    values = validate_values(values, cfg.get("parameters", {}))
     if "block" in cfg.get("netlist", {}):
         result = _split_prepare(cfg, task, run, values)
         write_json(run / "netlist_result.json", result)
@@ -158,15 +159,15 @@ def prepare(run: Path) -> dict:
     dest.parent.mkdir(parents=True, exist_ok=True)
     generator = cfg.get("netlist", {}).get("generator")
     if generator:
-        function = load_function(generator, Path(cfg["_project_root"]))
-        source = Path(function(cfg, task, run)).resolve()
+        function = load_function(generator, Path(cfg["_project_root"]), cfg)
+        source = local_path(run, str(function(cfg, task, run)))
         if not source.is_file():
             raise FileNotFoundError(source)
         if source != dest:
             shutil.copyfile(source, dest)
     else:
         source = local_path(Path(cfg["_project_root"]), cfg["template"])
-        dest.write_text(_render(source, values), encoding="utf-8")
+        dest.write_text(_render(source, values, cfg.get("parameters", {})), encoding="utf-8")
     result = {
         "status": "READY", "created_at": utc_now(), "source": str(source),
         "source_sha256": sha256(source), "netlist": str(dest),

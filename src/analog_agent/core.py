@@ -27,8 +27,27 @@ def utc_now() -> str:
 def write_json(path: Path, value: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(path.name + f".{uuid.uuid4().hex}.tmp")
-    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=2, allow_nan=False), encoding="utf-8")
-    os.replace(temporary, path)
+    try:
+        with temporary.open("x", encoding="utf-8") as stream:
+            json.dump(value, stream, ensure_ascii=False, indent=2, allow_nan=False)
+            stream.flush()
+            os.fsync(stream.fileno())
+        _fsync_directory(path.parent)
+        os.replace(temporary, path)
+        _fsync_directory(path.parent)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def _fsync_directory(directory: Path) -> None:
+    """Persist directory entries on POSIX; Windows has no directory fsync API."""
+    if os.name == "nt":
+        return
+    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -196,6 +215,13 @@ def create_run(config_path: Path, iteration: int, overrides: dict[str, str] | No
     maximum = int(runtime.get("workflow", {}).get("max_iterations", 1))
     if not 0 <= iteration < maximum:
         raise ValueError(f"iteration must be in [0, {maximum - 1}]")
+    from .parameters import validate_values
+    definitions = runtime.get("parameters", {})
+    overrides = validate_values(overrides or {}, definitions)
+    values = {name: (definition["candidates"][iteration]
+                    if iteration < len(definition.get("candidates", [])) else definition.get("initial"))
+              for name, definition in definitions.items()}
+    validate_values({**values, **overrides}, definitions)
     root = Path(runtime["_project_root"])
     if testbench is not None and testbench not in runtime.get("netlist", {}).get("testbenches", {}):
         raise ValueError(f"Unknown testbench: {testbench}")
