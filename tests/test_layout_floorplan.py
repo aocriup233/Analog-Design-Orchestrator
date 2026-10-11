@@ -38,15 +38,18 @@ class LayoutFloorplanFixture(LayoutRunsFixture):
         self.addCleanup(self.reader.stop)
 
     def pending(self):
-        # L2 is not implemented; fixtures walk the state table, never fabricate
-        # a public constraints CLI or silently bypass its future human gate.
-        for state in ("CONSTRAINTS_DRAFTED", "CONSTRAINTS_FROZEN", "FLOORPLAN_PENDING"):
-            transition(self.run, state)
+        from analog_agent.layout_constraints import constraints_draft, constraints_freeze
+        constraints_draft(self.run)
+        constraints_freeze(self.run, "reviewed fixture constraints")
 
     def freeze(self):
         self.pending()
         floorplan_export(self.run)
-        return floorplan_freeze(self.run, "reviewed manual fixture placement")
+        result = floorplan_freeze(self.run, "reviewed manual fixture placement")
+        from analog_agent.layout_placement_check import routing_review
+        routing_review(self.run, "proceed-with-warnings" if result["constraint_warnings"] else "proceed",
+                       "explicit fixture human routing decision")
+        return result
 
 
 class LayoutFloorplanTest(LayoutFloorplanFixture):

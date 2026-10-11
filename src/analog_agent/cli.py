@@ -13,6 +13,8 @@ from .parameters import validate_values
 from . import memory as project_memory
 from .layout_runs import clone_layout, layout_context, layout_path, lock_info, prepare_layout
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
+from .layout_constraints import constraints_draft, constraints_freeze
+from .layout_placement_check import floorplan_constraints_check, routing_review
 from .netlist_agent import prepare
 from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
@@ -107,11 +109,16 @@ def main() -> int:
     layout_prepare.add_argument("schematic", type=Path)
     layout_prepare.add_argument("--allow-failing-design", action="store_true")
     layout_prepare.add_argument("--reason", default="")
-    for name in ("status", "lock-info", "clone", "floorplan-export", "floorplan-freeze", "floorplan-check"):
+    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
-        if name == "floorplan-freeze":
+        if name in {"floorplan-freeze", "constraints-freeze"}:
             action.add_argument("--reason", required=True, help="Human review rationale")
+        if name == "constraints-freeze":
+            action.add_argument("--ack-warnings", action="store_true", help="Explicitly accept current draft warnings and coverage")
+        if name == "routing-review":
+            action.add_argument("--decision", choices=["proceed", "proceed-with-warnings"], required=True)
+            action.add_argument("--reason", required=True)
         if name == "floorplan-check":
             action.add_argument("--before", choices=["routing", "verification"], required=True)
     worker = sub.add_parser("worker", help=argparse.SUPPRESS)
@@ -221,6 +228,14 @@ def main() -> int:
             output = {"task": read_json(run / "task.json")}
         elif args.layout_command == "floorplan-export":
             output = floorplan_export(args.run)
+        elif args.layout_command == "constraints":
+            output = constraints_draft(args.run)
+        elif args.layout_command == "constraints-freeze":
+            output = constraints_freeze(args.run, args.reason, ack_warnings=args.ack_warnings)
+        elif args.layout_command == "constraints-check":
+            output = floorplan_constraints_check(args.run)
+        elif args.layout_command == "routing-review":
+            output = routing_review(args.run, args.decision, args.reason)
         elif args.layout_command == "floorplan-freeze":
             output = floorplan_freeze(args.run, args.reason)
         else:

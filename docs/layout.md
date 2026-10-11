@@ -1,7 +1,8 @@
-# Layout L1: configuration, linked states and manual floorplan
+# Layout L1/L2: configuration, constraints and manual floorplan
 
-L1 is an opt-in framework with fake-backend tests, not a certified live Virtuoso
-workflow. L2 constraints, L3 routing/DRC/LVS and L4 generator are not implemented.
+L1/L2 is an opt-in framework with fake-backend tests, not a certified live Virtuoso
+workflow. [L2 constraints](layout-constraints.md) add reviewed retrieval and
+advisory placement checks. L3 routing/DRC/LVS and L4 generator are not implemented.
 The [installed Bridge audit](design/layout-bridge-api.md) found no complete typed
 placement exporter; L1 requires a separately audited read-only adapter and fails
 closed without one. The example adapter deliberately raises NotImplementedError.
@@ -54,9 +55,12 @@ analog-agent layout prepare SCHEMATIC_RUN_DIR
 analog-agent layout status LAYOUT_RUN_DIR
 analog-agent layout lock-info LAYOUT_RUN_DIR
 analog-agent layout clone LAYOUT_RUN_DIR
+analog-agent layout constraints LAYOUT_RUN_DIR
+analog-agent layout constraints-freeze LAYOUT_RUN_DIR --reason "reviewed constraints"
 analog-agent layout floorplan-export LAYOUT_RUN_DIR
-# After L2 has frozen constraints and reached FLOORPLAN_PENDING:
 analog-agent layout floorplan-freeze LAYOUT_RUN_DIR --reason "reviewed placement"
+analog-agent layout constraints-check LAYOUT_RUN_DIR
+analog-agent layout routing-review LAYOUT_RUN_DIR --decision proceed --reason "reviewed clean check"
 ```
 
 Layout runs live in `<project>/layouts/<id>/`, separately from schematic `runs/`.
@@ -93,10 +97,12 @@ Every step can enter NEEDS_ATTENTION (terminal; inspect/reconcile, then create a
 new linked run). Frozen or later states can return to FLOORPLAN_PENDING when
 manual placement changes. Schematic states cannot enter layout states. The
 presence of a state in the table is **not** an implementation of its worker:
-L1 has no command to fabricate constraint approval, routing or clean DRC/LVS.
-Exports before FLOORPLAN_PENDING are draft snapshots only. Freeze refuses them
-until L2 provides the constraints human gate. Fake tests advance fixture states
-explicitly; production CLI does not bypass missing stages.
+L1/L2 cannot fabricate routing or clean DRC/LVS. Exports before FLOORPLAN_PENDING
+are draft snapshots only. Freeze requires L2's hashed constraints human gate;
+draft warnings need `--ack-warnings`. Routing checkpoints require a separate
+human routing-review (`proceed-with-warnings` when placement warnings remain).
+tests use the real draft/freeze commands with fake placement readers. Production
+CLI does not bypass missing stages.
 
 Mutating layout commands use an exclusive run lock. A stale `.layout.lock` is
 JSON with `pid`, `host`, `argv`, `started_at`; `layout lock-info` only reads it,
@@ -251,11 +257,12 @@ Tests use temporary user projects and fake readers; they cover private/external
 path checks, linked schematic tampering, strict states, locks, timestamp-neutral
 hashing, export/freeze review races, tiny movement, checkpoints, receipt tampering,
 reader allowlisting and local reader-process timeout. They do not certify real
-Virtuoso exports, tool licenses, PDK rules, routing or DRC/LVS. STOP after L1 PR.
+Virtuoso exports, tool licenses, PDK rules, routing or DRC/LVS. STOP after L2 PR.
 
 Schema-1 exports, inputs without the analysis spec gate, and pre-grid configs
 are deliberately not migrated/re-hashed in place. Preserve old runs as evidence
 and create a newly reviewed linked run with the new private config and complete
 adapter. Clone requires valid current inputs, copies exact reviewed freeze bytes
 with source and destination hashes checked, and does not promote inherited
-evidence to active approval. This follow-up does not implement any L2 feature.
+evidence to active approval. L2 source/hash checks and geometric warnings are
+documented separately in [the constraint contract](layout-constraints.md).

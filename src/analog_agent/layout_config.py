@@ -77,7 +77,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     if not isinstance(document, dict) or set(document) != {"layout"}:
         raise ValueError("Private layout config must contain only a layout object")
     cfg = document["layout"]
-    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection"}:
         raise ValueError("Unknown layout configuration fields")
     if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
@@ -93,6 +93,28 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     tolerance = number_value(validate_value("bbox_tolerance_nm", cfg.get("bbox_tolerance_nm", 0), {"type": "number"}))
     if grid <= 0 or tolerance < 0:
         raise ValueError("grid_nm must be positive and bbox_tolerance_nm nonnegative")
+    detection = cfg.get("detection", {})
+    if not isinstance(detection, dict) or set(detection) - {"top", "models"}:
+        raise ValueError("detection permits only top and models")
+    if "top" in detection:
+        identifier(detection["top"], "detection top", allow_leading_digit=leading)
+    models = detection.get("models", {})
+    if not isinstance(models, dict):
+        raise ValueError("detection.models must be an object")
+    for model, definition in models.items():
+        identifier(model, "model", allow_leading_digit=leading)
+        if not isinstance(definition, dict) or set(definition) != {"kind", "terminals"}:
+            raise ValueError("Model mapping requires kind and ordered terminals")
+        required = {"mos": {"d", "g", "s"}, "bjt": {"c", "b", "e"},
+                    "resistor": {"p", "n"}, "capacitor": {"p", "n"}}
+        terminals = definition["terminals"]
+        if (definition["kind"] not in required or not isinstance(terminals, list)
+                or not all(isinstance(t, str) for t in terminals)
+                or len(terminals) != len(set(terminals))
+                or not required[definition["kind"]].issubset(terminals)):
+            raise ValueError("Invalid model kind or terminal mapping")
+        for terminal in terminals:
+            identifier(terminal, "terminal")
     directories = {}
     for stage in ("drc", "lvs"):
         section = cfg.get(stage)
