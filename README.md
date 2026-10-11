@@ -13,6 +13,18 @@ containing directory before and after replacement on POSIX. Windows does not
 provide POSIX directory fsync: file contents are flushed there, but directory
 entry durability across power loss is not guaranteed by this Python API.
 
+Security defaults: module plugins must match `plugins.allowed_modules` (default
+`["analog_agent.proposers"]`, including its submodules). Project-local `.py`
+plugins remain trusted executable code. Dangerous standard-library callable
+origins are rejected even through local aliases. `simulation.spectre_cmd` must
+be a single absolute executable path or an allowed command name from
+`simulation.allowed_spectre_commands` (default `["spectre"]`); wrapper command
+strings and whitespace are not accepted. The audited bridge source uses
+argument-array subprocess calls, not `shell=True`; deployments must audit/pin
+their optional bridge dependency as well. LSF requires `remote_sha256` by
+default; explicit `simulation.require_remote_sha256: false` is a compatibility
+opt-out, not equivalent verification. Relative result paths are run-relative.
+
 [简体中文](README.zh-CN.md)
 
 ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory.

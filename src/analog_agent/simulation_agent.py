@@ -7,7 +7,7 @@ import json
 import os
 
 from .backends import backend_for, json_safe
-from .core import read_json, run_config, sha256, utc_now, write_json
+from .core import local_path, read_json, run_config, sha256, utc_now, write_json
 from .sim_rules import build_deck
 from .state import status, transition
 
@@ -233,10 +233,16 @@ def verify(run: Path) -> dict:
 
 
 def _check_artifacts(run: Path, retrieved: dict) -> None:
+    simulation = run_config(run).get("simulation", {})
     for artifact in retrieved.get("artifacts", []):
-        path = Path(artifact["path"]).resolve(strict=True)
+        path = local_path(run, artifact["path"]).resolve(strict=True)
         if not path.is_relative_to(run.resolve()) or sha256(path) != artifact["sha256"]:
             raise ValueError(f"Retrieved artifact changed: {path}")
+        remote = artifact.get("remote_sha256")
+        if simulation.get("backend") == "lsf" and simulation.get("require_remote_sha256", True) is not False and not remote:
+            raise ValueError("LSF retrieval requires remote_sha256")
+        if remote and sha256(path) != remote:
+            raise ValueError(f"Retrieved remote artifact changed: {path}")
 
 
 def cleanup_remote(run: Path) -> dict:
