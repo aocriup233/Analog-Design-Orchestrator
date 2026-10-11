@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+from bisect import bisect_left
 from pathlib import Path
 
 from .core import read_json, run_config, utc_now, write_json
@@ -30,6 +31,21 @@ def extract(data: dict, definition: dict, run: Path | None = None, project_root:
         if not freq or len(freq) != len(signal):
             raise ValueError("AC frequency and signal lengths differ")
         target = float(definition["at_hz"])
+        freq = [float(value) for value in freq]
+        if (not math.isfinite(target) or any(not math.isfinite(value) or value <= 0 for value in freq)
+                or any(right <= left for left, right in zip(freq, freq[1:]))):
+            raise ValueError("AC frequencies must be finite, positive and strictly increasing")
+        if target < freq[0] or target > freq[-1]:
+            raise ValueError("at_hz is outside the AC sweep")
+        if definition.get("interpolate") is True:
+            right = bisect_left(freq, target)
+            if freq[right] == target:
+                return 20 * math.log10(max(_magnitude(signal[right]), 1e-30))
+            left = right - 1
+            fraction = (math.log(target) - math.log(freq[left])) / (math.log(freq[right]) - math.log(freq[left]))
+            db_left = 20 * math.log10(max(_magnitude(signal[left]), 1e-30))
+            db_right = 20 * math.log10(max(_magnitude(signal[right]), 1e-30))
+            return db_left + fraction * (db_right - db_left)
         index = min(range(len(freq)), key=lambda i: abs(float(freq[i]) - target))
         return 20 * math.log10(max(_magnitude(signal[index]), 1e-30))
     if kind == "python":

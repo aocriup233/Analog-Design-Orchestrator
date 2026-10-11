@@ -650,6 +650,7 @@ def run_until_review(campaign: Path, max_seconds: int = 3600) -> dict:
     if max_seconds < 1:
         raise ValueError("max_seconds must be positive")
     deadline = time.monotonic() + max_seconds
+    previous = None
     while True:
         report = step(campaign)
         draining = (report["status"] == "NEEDS_ATTENTION" and
@@ -661,9 +662,10 @@ def run_until_review(campaign: Path, max_seconds: int = 3600) -> dict:
             return report
         waiting_on_job = any(point["state"] in {"SUBMITTED", "RUN"}
                              for point in report["cycles"][-1]["points"])
-        if waiting_on_job:
-            interval = report["policy"]["poll_interval_s"]
-            time.sleep(min(interval, max(0, deadline - time.monotonic())))
+        if waiting_on_job or report == previous:
+            interval = max(1.0, float(report["policy"]["poll_interval_s"]))
+            time.sleep(max(1.0, min(interval, max(0, deadline - time.monotonic()))))
+        previous = report
 
 
 def pause(campaign: Path) -> dict:
@@ -770,6 +772,12 @@ def retire(campaign: Path, reason: str, superseded_by: Path | None = None) -> di
 
 def propose(campaign: Path) -> dict:
     """Call an optional user-owned proposer; never auto-submit its suggestion."""
+    campaign = campaign.resolve()
+    with _lock(campaign):
+        return _propose_locked(campaign)
+
+
+def _propose_locked(campaign: Path) -> dict:
     manifest = _manifest(campaign)
     if manifest["status"] not in {"AWAITING_POINTS", "REVIEW"}:
         raise ValueError("Proposals are accepted only at a decision boundary")

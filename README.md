@@ -25,6 +25,11 @@ their optional bridge dependency as well. LSF requires `remote_sha256` by
 default; explicit `simulation.require_remote_sha256: false` is a compatibility
 opt-out, not equivalent verification. Relative result paths are run-relative.
 
+`ac_db_at` rejects targets outside the recorded sweep. Its optional
+`"interpolate": true` linearly interpolates dB magnitude versus log frequency;
+the default still chooses the nearest sample. Campaign proposal generation is
+serialized with campaign mutations; idle campaign loops wait at least one second.
+
 [简体中文](README.zh-CN.md)
 
 ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory.
