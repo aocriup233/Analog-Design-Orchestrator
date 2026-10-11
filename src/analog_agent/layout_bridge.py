@@ -109,10 +109,13 @@ def read_placement(run: Path, timeout_s: float) -> dict:
         raise _diagnosed(ReaderStateError(f"Reader exited without a result; diagnostics: {relative}"), relative)
     try:
         envelope = read_json(local_path(run, str(result)))
-        if not isinstance(envelope, dict) or envelope.get("status") not in {"ok", "input_error", "evidence_error", "crash"}:
+        if (not isinstance(envelope, dict) or not isinstance(envelope.get("status"), str)
+                or envelope["status"] not in {"ok", "input_error", "evidence_error", "crash"}):
             raise ValueError("Invalid result envelope")
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, TypeError) as exc:
         raise _diagnosed(ReaderStateError(f"Invalid reader result; diagnostics: {relative}"), relative) from exc
+    if process.returncode:
+        raise _diagnosed(ReaderStateError(f"Reader abnormal exit; reconcile Bridge; diagnostics: {relative}"), relative)
     if envelope["status"] == "input_error":
         message = "Placement adapter is not implemented" if envelope.get("code") == "not_implemented" else "Placement adapter rejected its input"
         raise _diagnosed(ReaderInputError(f"{message}; diagnostics: {relative}"), relative)

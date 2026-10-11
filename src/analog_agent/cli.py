@@ -247,6 +247,8 @@ def main() -> int:
                 run_config(args.run).get("workflow", {}).get("return_mode") != "full"):
             output = {k: v for k, v in output.items() if k != "data"}
     print(json.dumps(output, ensure_ascii=False, indent=2))
+    if args.command == "layout" and args.layout_command == "floorplan-freeze" and output.get("status") != "FLOORPLAN_FROZEN":
+        return 1
     return 0
 
 

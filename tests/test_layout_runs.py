@@ -25,7 +25,7 @@ class LayoutRunsFixture(unittest.TestCase):
         work = self.base / "work"
         work.mkdir()
         section = {"rule_dir": str(external), "run_dir": str(work)}
-        write_json(self.layout_config, {"layout": {"tool": "calibre", "library": "worklib",
+        write_json(self.layout_config, {"layout": {"tool": "calibre", "library": "worklib", "grid_nm": 1,
                    "cell": "top", "drc": section, "lvs": section}})
         self.source = create_run(self.config, 0)
         self.net = prepare(self.source)

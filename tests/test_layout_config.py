@@ -18,7 +18,7 @@ class LayoutConfigTest(unittest.TestCase):
         self.rules.mkdir()
         self.work = self.base / "work"
         self.work.mkdir()
-        self.cfg = {"tool": "pegasus", "library": "user_lib", "cell": "user_cell",
+        self.cfg = {"tool": "pegasus", "library": "user_lib", "cell": "user_cell", "grid_nm": 1,
                     "drc": {"rule_dir": str(self.rules), "run_dir": str(self.work)},
                     "lvs": {"rule_dir": str(self.rules), "run_dir": str(self.work)}}
 

@@ -77,7 +77,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     if not isinstance(document, dict) or set(document) != {"layout"}:
         raise ValueError("Private layout config must contain only a layout object")
     cfg = document["layout"]
-    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm"}:
         raise ValueError("Unknown layout configuration fields")
     if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
@@ -89,6 +89,10 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     timeout = number_value(validate_value("layout.timeout_s", cfg.get("timeout_s", 300), {"type": "number"}))
     if timeout <= 0:
         raise ValueError("layout.timeout_s must be positive")
+    grid = number_value(validate_value("grid_nm", cfg.get("grid_nm"), {"type": "number"}))
+    tolerance = number_value(validate_value("bbox_tolerance_nm", cfg.get("bbox_tolerance_nm", 0), {"type": "number"}))
+    if grid <= 0 or tolerance < 0:
+        raise ValueError("grid_nm must be positive and bbox_tolerance_nm nonnegative")
     directories = {}
     for stage in ("drc", "lvs"):
         section = cfg.get(stage)

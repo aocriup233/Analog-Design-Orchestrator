@@ -23,6 +23,8 @@ project's** `private/layout/`, not the ADO checkout. Replace all placeholders.
 | `drc.runset`, `lvs.runset` | Optional existing readable absolute files outside the project and ADO checkout |
 | `bridge.reader` | Trusted function reference, loaded only through `plugins.load_function` |
 | `allow_leading_digit` | Boolean, default false; permits a digit at the start of library/cell/instance/master names, never other executable characters |
+| `grid_nm` | Required private positive manufacturing grid in nm; no public foundry-specific default |
+| `bbox_tolerance_nm` | Nonnegative origin/bbox expansion tolerance in nm, default zero |
 
 Every run directory must be writable and disjoint from **both** rule directories:
 equal, inside or containing relationships (including cross-stage relationships)
@@ -102,11 +104,14 @@ even when private inputs have changed. `layout_lock` yields a scoped
 LayoutSession capability, invalid after exit. Internal lock-held operations
 accept that session instead of re-acquiring the lock; no global re-entrant lock.
 The argv owner record is local evidence, not a prompt or public config snapshot;
-credentials must never be supplied in command arguments.
+credentials must never be supplied in command arguments. Locks are
 never silently reclaimed: inspect the owning process and reconcile any Bridge
-operation before removing that exact lock. Evidence/config/schema/reader errors
-enter NEEDS_ATTENTION with sanitized diagnostics; invalid command ordering is
-rejected without advancing state. `layout status` revalidates inputs; inspect
+operation before removing that exact lock. Known input errors (missing reader,
+unimplemented stub, wrong target, invalid schema/grid/bbox) leave the current
+state unchanged. Only pinned-evidence tampering, TimeoutError, or reader crash
+with unknown Bridge state enters NEEDS_ATTENTION. Invalid ordering is rejected
+without advancing state. Unknown reader failures require reconcile; private
+error content is never included in task.json. `layout status` revalidates inputs; inspect
 `task.json` directly if changed inputs prevent validation.
 
 ## Floorplan schema and hashing
@@ -115,25 +120,52 @@ rejected without advancing state. `layout status` revalidates inputs; inspect
 
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "source": "manual",
   "cellview": {"library": "USER_LIBRARY", "cell": "USER_CELL", "view": "layout", "path": "USER_LIBRARY/USER_CELL/layout"},
-  "units": "um",
+  "units": "nm",
   "export_timestamp": "UTC ISO-8601 timestamp assigned by worker",
-  "instances": []
+  "instances": [],
+  "pins": [],
+  "labels": [],
+  "pr_boundary": []
 }
 ```
 
 Each instance contains exactly `instance` (unique identifier), `master` with
-`library`, `cell`, `view`, finite JSON numeric `x`, `y`, `orientation`, and
-`bbox: [[xmin, ymin], [xmax, ymax]]` in the top-level coordinate frame. The
+`library`, `cell`, `view`, finite JSON numeric `x`, `y`, `orientation`,
+`bbox: [[xmin, ymin], [xmax, ymax]]` in the top-level coordinate frame, `params`
+(the complete reported master/PCell JSON parameter object), and `params_sha256`.
+The adapter reports the canonical parameter digest; validation recomputes it from
+sorted-key compact UTF-8 JSON (`ensure_ascii=False`, `allow_nan=False`). A parameter
+change counts even at unchanged xy. Do not infer missing parameters as `{}`.
+Pins contain exactly `name`, `layer`, `bbox`; labels contain exactly `text`,
+`layer`, `bbox`. `pr_boundary` is an empty list or a polygon of at least three
+xy points. Every added field participates in placement identity; empty fields
+mean genuinely absent geometry, never unavailable reader data. No raw rule or
+private configuration document is serialized into any of these fields. The
 cellview path is a logical OA identity, **not** an arbitrary filesystem path.
-Simple identifiers use `[A-Za-z_][A-Za-z0-9_-]*`; array/hierarchical names outside
-this conservative subset are currently rejected, not silently renamed.
+Simple identifiers use `[A-Za-z_][A-Za-z0-9_-]*`; allow_leading_digit widens the
+first character for library/cell/instance/master library/cell only. View names
+remain strict. All offending names are reported together. Instance names alone
+also accept slash-separated hierarchy and `<i>`/`<i:j>` iteration suffixes with
+nonnegative, non-zero-padded decimal indices. Canonical stored names use uppercase
+percent escapes: `X0/M1<0:3>` becomes `X0%2FM1%3C0%3A3%3E`. Raw and canonical
+spellings normalize identically; duplicate aliases are rejected. Empty segments,
+dot traversal, backslashes, double/lowercase percent escaping and mixed executable
+syntax are rejected. These strings are identifiers, never executable expressions.
 Orientation is R0/R90/R180/R270/MX/MY/MXR90/MYR90. Units are authoritative `um`,
 `nm` or `m`; no inferred unit, rounded coordinates or string/Spectre suffixes are
-accepted for geometry. Existing parameter validators check finite numeric values,
-then geometry-specific checks enforce types, orientation and bbox ordering.
+accepted for geometry. Every coordinate (including bbox, pins, labels and boundary)
+is converted using Decimal to **integer nanometres**, with stored `units=nm`.
+Coordinates must be on the configured grid within 1e-6 nm float-noise tolerance;
+no out-of-tolerance snapping is permitted. The same physical um/nm export hashes
+identically. Sub-nm grid settings are positive and legal, but coordinates on
+fractional-nm grid sites cannot be represented by this integer-nm schema and are
+explicitly rejected rather than silently rounded. Existing parameter validators
+check finite values, then geometry checks enforce types, grid, orientation, bbox
+ordering and that origin lies within bbox expanded by bbox_tolerance_nm (errors
+identify the instance). Manufacturing rules remain private and user-configured.
 Instances are sorted by name; booleans, NaN, duplicate names, wrong target and
 unknown fields/operations are rejected. Empty instances means an empty cellview,
 not a parser failure; the adapter must distinguish those outcomes.
@@ -142,7 +174,7 @@ Two digests have deliberately different meanings:
 
 - `sha256`: exact exported JSON bytes including the export timestamp.
 - `placement_sha256`: canonical sorted JSON content **excluding** the timestamp,
-  with int/float geometry normalized and negative zero normalized to zero.
+  using the validated integer-nm form and all reported placement identity fields.
 
 Thus repeated exports preserve placement identity but not timestamped artifact
 identity. This is placement provenance, **not a full cellview geometry/connectivity
@@ -150,18 +182,21 @@ hash** suitable for DRC/LVS. L3 must add that separately.
 
 `floorplan-freeze` requires a review reason, verifies the exported byte hash and
 captures the live placement again. A live change publishes a new draft and stays
-pending. Success saves an immutable receipt under `floorplan_freezes/`, embedding
+pending; the CLI prints FLOORPLAN_PENDING and exits non-zero, not success.
+Success saves an immutable receipt under `floorplan_freezes/`, embedding
 the reviewed floorplan, both hashes, input hash and review reason; task.json pins
 its path and byte hash. Re-freezing after a change creates a new receipt and
 preserves the previous evidence. Manual mode never creates/moves instances.
 
-`require_unchanged_floorplan(run, checkpoint)` / `layout floorplan-check RUN
+`require_unchanged_floorplan(run, checkpoint, session=held)` / `layout floorplan-check RUN
 --before routing|verification` re-export and compare with the active freeze.
 Any placement change clears the active approval, returns to FLOORPLAN_PENDING
 and blocks the caller. Routing requires FLOORPLAN_FROZEN; verification requires
-ROUTED/DRC_DONE/LVS_DONE. Future workers must call this immediately before routing
-and again before verification, holding their execution/session lock across
-checking and use, and check postconditions. L1's run lock is not a Virtuoso GUI
+ROUTED/DRC_DONE/LVS_DONE. Public commands acquire their own lock. L3 workers must
+hold **one** `with layout_lock(run) as held:` across check, use and postcondition
+check, passing `session=held` to both checks without re-acquiring the lock. There
+is no re-entrant/global lock. Session is invalid after exit. A second public check
+under an existing lock fails instead of silently re-entering. L1's run lock is not a Virtuoso GUI
 lock: concurrent human editing remains a snapshot/use race, not solved by hashes.
 
 ## Bridge and LLM trust boundaries
@@ -171,6 +206,9 @@ The only L1 operation ID is `read_placement`. The trusted adapter signature is
 exact target library/cell/view, and numeric timeout; it contains no live client,
 raw SKILL, shell command, rule content or writable floorplan operation. The
 worker supplies/overwrites the export timestamp and validates the full schema.
+Adapters use ValueError for known input rejection and NotImplementedError for
+unsupported read capability. RuntimeError/abnormal exit means unknown Bridge
+state. The example stub lists all schema-2 fields and never fabricates them.
 The parent supplies a run-confined `reader_results/<uuid>.json` path. The child
 creates it exclusively with mode 0600 and fsyncs its JSON envelope; stdout is
 not a data channel. Logs/tracebacks go only to an exclusively created mode-0600
@@ -214,3 +252,10 @@ path checks, linked schematic tampering, strict states, locks, timestamp-neutral
 hashing, export/freeze review races, tiny movement, checkpoints, receipt tampering,
 reader allowlisting and local reader-process timeout. They do not certify real
 Virtuoso exports, tool licenses, PDK rules, routing or DRC/LVS. STOP after L1 PR.
+
+Schema-1 exports, inputs without the analysis spec gate, and pre-grid configs
+are deliberately not migrated/re-hashed in place. Preserve old runs as evidence
+and create a newly reviewed linked run with the new private config and complete
+adapter. Clone requires valid current inputs, copies exact reviewed freeze bytes
+with source and destination hashes checked, and does not promote inherited
+evidence to active approval. This follow-up does not implement any L2 feature.

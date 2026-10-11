@@ -9,6 +9,7 @@ import json
 import socket
 import sys
 import shutil
+import hashlib
 from dataclasses import dataclass
 from contextlib import contextmanager
 from pathlib import Path
@@ -129,8 +130,19 @@ def _atomic_run(root: Path, inputs: dict, *, freeze=None, cloned_from=None) -> P
         if freeze:
             # A carried review is evidence, not permission to bypass L2 gates.
             path = local_path(temporary, "floorplan_freezes/inherited.json")
-            write_json(path, freeze)
-            task["inherited_floorplan_freeze"] = {"path": "floorplan_freezes/inherited.json", "sha256": sha256(path)}
+            path.parent.mkdir()
+            raw, expected = freeze
+            if hashlib.sha256(raw).hexdigest() != expected:
+                raise LayoutEvidenceError("Clone freeze bytes do not match the reviewed hash")
+            with path.open("xb") as stream:
+                stream.write(raw)
+                stream.flush()
+                os.fsync(stream.fileno())
+            _fsync_directory(path.parent)
+            copied_hash = sha256(path)
+            if copied_hash != expected:
+                raise LayoutEvidenceError("Copied freeze hash mismatch")
+            task["inherited_floorplan_freeze"] = {"path": "floorplan_freezes/inherited.json", "sha256": copied_hash}
         write_json(local_path(temporary, "task.json"), task)
         _fsync_directory(temporary)
         _fsync_directory(layouts)
@@ -206,13 +218,16 @@ def clone_layout(run: Path) -> Path:
     freeze = None
     if task.get("active_floorplan_freeze"):
         from .layout_floorplan import _frozen
-        freeze = _frozen(run, cfg)
+        _frozen(run, cfg)
+        ref = task["active_floorplan_freeze"]
+        raw = local_path(run, ref["path"]).read_bytes()
+        freeze = (raw, ref["sha256"])
     elif task.get("inherited_floorplan_freeze"):
         ref = task["inherited_floorplan_freeze"]
         path = local_path(run, ref["path"])
         if sha256(path) != ref["sha256"]:
             raise LayoutEvidenceError("Inherited freeze receipt changed")
-        freeze = read_json(path)
+        freeze = (path.read_bytes(), ref["sha256"])
     inputs = read_json(local_path(run, "layout_inputs.json"))
     layout_context(run)
     if sha256(task_path) != original_hash or lock_info(run)["locked"]:
