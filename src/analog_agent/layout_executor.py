@@ -16,6 +16,7 @@ from .core import _fsync_directory, local_path, read_json, write_json
 from .layout_bridge import _kill_reader, _private_file, ReaderStateError
 from .layout_runs import layout_context, layout_path
 from .plugins import load_function
+from .parameters import number_value
 
 OPERATIONS = frozenset({"read_layout_snapshot", "read_terminals", "append_path", "append_via",
                         "remove_owned_routes", "save_target", "export_verification_snapshot", "verify"})
@@ -41,12 +42,13 @@ def execute(run, operation, payload):
     """Bound subprocess lifetime; retain exclusive result/private diagnostics."""
     run = layout_path(run)
     cfg, _, _ = configured(run, operation)  # Reject missing adapters before spawning.
+    timeout = number_value(str(cfg.get("timeout_s", 300)))
     token = uuid.uuid4().hex
     directory = local_path(run, f"execution/{token}")
     directory.mkdir(parents=True, exist_ok=False, mode=0o700)
     request, result, log = directory / "request.json", directory / "result.json", directory / "stderr.log"
     write_json(request, {"operation": operation, "target": {"library": cfg["library"], "cell": cfg["cell"], "view": "layout"},
-                         "timeout_s": cfg.get("timeout_s", 300), "payload": payload})
+                         "timeout_s": timeout, "payload": payload})
     command = [sys.executable] + (["-P"] if sys.version_info >= (3, 11) else [])
     command += ["-m", "analog_agent.layout_executor", str(run), str(request), str(result)]
     env = os.environ.copy()
@@ -55,10 +57,12 @@ def execute(run, operation, payload):
     with tempfile.TemporaryDirectory(prefix="ado-layout-") as empty, _private_file(log) as diagnostics:
         process = subprocess.Popen(command, cwd=empty, env=env, stdout=subprocess.DEVNULL, stderr=diagnostics, **options)
         try:
-            process.communicate(timeout=float(cfg.get("timeout_s", 300)))
+            process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             try:
                 _kill_reader(process)
+            except (OSError, subprocess.TimeoutExpired):
+                pass
             finally:
                 try:
                     process.communicate(timeout=10)
@@ -72,7 +76,9 @@ def execute(run, operation, payload):
         envelope = read_json(local_path(run, str(result)))
     except (OSError, ValueError) as exc:
         raise ReaderStateError("Adapter result is absent or malformed; reconcile") from exc
-    if process.returncode or envelope.get("status") != "ok" or set(envelope) != {"status", "result"}:
+    if process.returncode == 0 and envelope == {"status": "unsupported"}:
+        raise ValueError("Typed adapter operation is not implemented; no raw fallback")
+    if process.returncode or not isinstance(envelope, dict) or envelope.get("status") != "ok" or set(envelope) != {"status", "result"}:
         raise ReaderStateError(f"Typed adapter failed; reconcile; diagnostics: {log.relative_to(run).as_posix()}")
     return envelope["result"]
 
@@ -87,6 +93,9 @@ def main():
             with contextlib.redirect_stdout(sys.stderr):
                 value = call_adapter(run, read_json(request))
             envelope = {"status": "ok", "result": value}
+        except NotImplementedError:
+            traceback.print_exc(file=sys.stderr)
+            envelope = {"status": "unsupported"}
         except Exception:
             traceback.print_exc(file=sys.stderr)
             envelope = {"status": "crash"}

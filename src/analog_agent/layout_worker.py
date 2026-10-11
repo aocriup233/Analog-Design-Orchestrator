@@ -55,12 +55,18 @@ def route(run: Path, *, session=None, fix=None):
     session.require(run)
     if status(run) != "FLOORPLAN_FROZEN":
         raise ValueError("Routing requires FLOORPLAN_FROZEN and a reviewed JSON plan")
-    cfg, _, context = routing_context(run, session, fix=fix)
-    task = read_json(local_path(run, "task.json"))
-    reference = task.get("active_routing_plan")
+    try:
+        cfg, _, context = routing_context(run, session, fix=fix)
+        task = read_json(local_path(run, "task.json"))
+        reference = task.get("active_routing_plan")
+        if reference:
+            proposal = _pinned(run, reference)
+    except LayoutEvidenceError:
+        attention(run, "LayoutEvidenceError")
+        raise
     if not reference:
         raise ValueError("Validated routing proposal required; proposals are never auto-executed")
-    plan = validate_plan(_pinned(run, reference), context, cfg)
+    plan = validate_plan(proposal, context, cfg)
     configured(run, "read_layout_snapshot")
     require_unchanged_floorplan(run, "routing", session=session)
     mutated = False
@@ -79,7 +85,7 @@ def route(run: Path, *, session=None, fix=None):
         ownership = [] if not previous else [r for r in previous["owned_routes"] if r["net"] not in context["allowed_nets"]]
         for net in plan["net_order"]:
             for item in (r for r in plan["routes"] if r["net"] == net):
-                owned_id = f"r_{uuid.uuid4().hex}"
+                owned_id = "r_" + digest({"plan": reference["sha256"], "id": item["id"]})[:24]
                 mutated = True
                 receipt = execute(run, "append_path", {"route_id": owned_id, "net": net, "layer": item["layer"],
                                   "width_nm": item["width_nm"], "spacing_nm": item["spacing_nm"],
@@ -122,6 +128,6 @@ def route(run: Path, *, session=None, fix=None):
                    active_drc_report=None, active_lvs_report=None)
         return {**result_ref, "status": status(run), "unrouted_nets": unrouted}
     except Exception as exc:
-        if mutated or isinstance(exc, (TimeoutError, LayoutEvidenceError)):
+        if mutated or isinstance(exc, (TimeoutError, LayoutEvidenceError, RuntimeError)):
             attention(run, type(exc).__name__)
         raise

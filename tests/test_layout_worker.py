@@ -45,10 +45,69 @@ class LayoutWorkerFixture(LayoutFloorplanFixture):
             return {"cellview_sha256": self.data["sha256"], "routed_nets": self.plan["net_order"], "unrouted_nets": [], "warnings": []}
         if operation == "save_target":
             return {"saved": True, "cellview_sha256": self.data["sha256"]}
+        if operation in {"append_path", "append_via"}:
+            self.data["geometry" if operation == "append_path" else "vias"].append(copy.deepcopy(payload))
+            self.data["sha256"] = digest({k: v for k, v in self.data.items() if k != "sha256"})
+            return {"route_id": payload["route_id"], "net": payload["net"], "created": True}
+        if operation == "remove_owned_routes":
+            for key in ("geometry", "vias"):
+                self.data[key] = [g for g in self.data[key] if g["route_id"] not in payload["route_ids"]]
+            self.data["sha256"] = digest({k: v for k, v in self.data.items() if k != "sha256"})
+            return {"removed_route_ids": payload["route_ids"]}
         raise AssertionError(operation)
 
 
 class LayoutWorkerTest(LayoutWorkerFixture):
+    def test_real_stub_isolated_result_channel_fails_closed(self):
+        from analog_agent.layout_executor import execute
+        with self.assertRaisesRegex(ValueError, "not implemented"):
+            execute(self.run, "read_layout_snapshot", {})
+        self.assertEqual(status(self.run), "FLOORPLAN_FROZEN")
+        results = list((self.run / "execution").glob("*/result.json"))
+        self.assertEqual(len(results), 1)
+        self.assertEqual(read_json(results[0]), {"status": "unsupported"})
+
+    def test_timeout_second_communicate_is_always_timeout_error(self):
+        import subprocess
+        from analog_agent.layout_executor import execute
+        with patch("analog_agent.layout_executor.subprocess.Popen") as factory, \
+             patch("analog_agent.layout_executor._kill_reader") as kill:
+            process = factory.return_value
+            process.communicate.side_effect = subprocess.TimeoutExpired("fixture", 1)
+            with self.assertRaises(TimeoutError):
+                execute(self.run, "read_layout_snapshot", {})
+            kill.assert_called_once_with(process)
+            self.assertEqual(process.communicate.call_count, 2)
+            command = factory.call_args.args[0]
+            self.assertEqual(command[-1].split("result.json")[-1], "")
+
+    def test_planner_has_json_context_and_cannot_execute(self):
+        from analog_agent.layout_routing import propose_routing
+        def planner(role, project, context_path, output_path, directory):
+            context = read_json(context_path)
+            self.assertEqual(role, "routing")
+            self.assertNotIn("verification_adapter", context)
+            self.assertNotIn("private", context)
+            write_json(output_path, {**self.plan, "inputs": context["inputs"]})
+        with patch("analog_agent.workflow.invoke_json_role", side_effect=planner), \
+             patch("analog_agent.layout_worker.execute") as bridge:
+            result = propose_routing(self.run)
+        bridge.assert_not_called()
+        self.assertEqual(result["status"], "FLOORPLAN_FROZEN")
+
+    def test_owned_path_mutation_and_full_hash_readback(self):
+        from analog_agent.core import update_status
+        self.plan["routes"] = [{"id": "ground", "net": "0", "layer": "metal", "width_nm": 10,
+                               "spacing_nm": 5, "shielding": None, "guide_points": [[0, 0], [100, 0]], "vias": []}]
+        update_status(self.run, status(self.run), active_routing_plan=publish(self.run, "routing_proposals", self.plan))
+        original = self.data["sha256"]
+        with patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
+            result = route(self.run)
+        report = read_json(self.run / result["path"])
+        self.assertNotEqual(original, report["cellview_sha256"])
+        self.assertEqual(report["owned_routes"][0]["id"], self.data["geometry"][0]["route_id"])
+        self.assertEqual(report["owned_routes"][0]["net"], "0")
+
     def test_fake_routing_single_lock_no_placement_operation(self):
         with patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
             result = route(self.run)

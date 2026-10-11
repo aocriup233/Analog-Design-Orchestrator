@@ -92,7 +92,8 @@ def validate_plan(plan, context, cfg):
         rule = tech["layers"][route["layer"]]
         width = numeric(route["width_nm"], "width_nm", positive=True)
         spacing = numeric(route["spacing_nm"], "spacing_nm")
-        _coordinate(width, grid)
+        route["width_nm"] = _coordinate(width, grid)
+        route["spacing_nm"] = _coordinate(spacing, grid)
         if width < numeric(rule["min_width_nm"], "min_width_nm") or spacing < numeric(rule["min_spacing_nm"], "min_spacing_nm"):
             raise ValueError("Route violates private numeric width/spacing limits")
         if route["shielding"] is not None and route["shielding"] not in context["nets"]:
@@ -130,6 +131,31 @@ def validate_plan(plan, context, cfg):
             for net in c["nets"]:
                 if sum(len(r["vias"]) for r in result["routes"] if r["net"] == net) > c["max_count"]:
                     raise ValueError("Route exceeds frozen maximum via count")
+    if expected_pairs:
+        axes = {(c["axis"]["direction"], c["axis"]["coordinate_nm"])
+                for c in constraints if c["kind"] == "symmetry"}
+        if len(axes) != 1:
+            raise ValueError("Symmetric routing needs one unambiguous frozen symmetry axis")
+        direction, coordinate = next(iter(axes))
+        index = 0 if direction == "x" else 1
+        def signature(route, mirror=False):
+            points = copy.deepcopy(route["guide_points"])
+            vias = copy.deepcopy(route["vias"])
+            if mirror:
+                for point in points:
+                    point[index] = 2 * coordinate - point[index]
+                for via in vias:
+                    via["xy"][index] = 2 * coordinate - via["xy"][index]
+            # Path direction is immaterial; via physical orientation must be
+            # checked by the audited adapter for the selected via definition.
+            return {"layer": route["layer"], "width": route["width_nm"], "spacing": route["spacing_nm"],
+                    "shielding": route["shielding"], "points": min(points, list(reversed(points))),
+                    "vias": sorted((v["via"], v["xy"][0], v["xy"][1]) for v in vias)}
+        for left, right in expected_pairs:
+            a = sorted(digest(signature(r, True)) for r in result["routes"] if r["net"] == left)
+            b = sorted(digest(signature(r)) for r in result["routes"] if r["net"] == right)
+            if not a or a != b:
+                raise ValueError("Symmetric routing paths/layers/widths/vias do not mirror about the frozen axis")
     return result
 
 
@@ -169,15 +195,20 @@ def routing_context(run, session, *, fix=None):
         "violation_ids": violations, "violations": _pinned(run, fix)["violations"] if fix else []}
 
 
-def propose_routing(run: Path):
+def propose_routing(run: Path, *, fix=False):
     """Invoke only the trusted routing role; validate and pin JSON, never route."""
     from .workflow import invoke_json_role
     run = layout_path(run)
     with layout_lock(run) as session:
-        if status(run) != "FLOORPLAN_FROZEN":
+        fix_ref = None
+        if fix:
+            from .layout_fix import prepare_fix
+            fix_ref = prepare_fix(run, session)
+        elif status(run) != "FLOORPLAN_FROZEN":
             raise ValueError("Routing proposal requires FLOORPLAN_FROZEN")
-        require_unchanged_floorplan(run, "routing", session=session)
-        cfg, project, context = routing_context(run, session)
+        checkpoint = "verification" if fix else "routing"
+        require_unchanged_floorplan(run, checkpoint, session=session)
+        cfg, project, context = routing_context(run, session, fix=fix_ref)
         token = uuid.uuid4().hex
         directory = local_path(run, f"routing_proposals/{token}")
         directory.mkdir(parents=True, exist_ok=False)
@@ -190,8 +221,8 @@ def propose_routing(run: Path):
             transition(run, "NEEDS_ATTENTION", error={"kind": "TimeoutError", "message": "Routing role timeout; reconcile before retry"})
             raise
         plan = validate_plan(read_json(local_path(run, str(output))), context, cfg)
-        require_unchanged_floorplan(run, "routing", session=session)
+        require_unchanged_floorplan(run, checkpoint, session=session)
         write_json(output, plan)
         reference = {"path": output.relative_to(run).as_posix(), "sha256": sha256(output)}
-        update_status(run, status(run), active_routing_plan=reference)
+        update_status(run, status(run), active_routing_plan=reference, active_fix=fix_ref)
         return {**reference, "status": status(run)}

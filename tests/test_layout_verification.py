@@ -54,6 +54,14 @@ class VerificationFixture(LayoutWorkerFixture):
 
 
 class LayoutVerificationTest(VerificationFixture):
+    def test_human_routing_review_tamper_blocks_verification(self):
+        reference = read_json(self.run / "task.json")["active_routing_review"]
+        write_json(self.run / reference["path"], {"decision": "changed"})
+        with patch("analog_agent.layout_verification.execute") as tool, self.assertRaises(ValueError):
+            verify(self.run)
+        tool.assert_not_called()
+        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+
     def test_same_snapshot_clean_drc_lvs_gate(self):
         with patch("analog_agent.layout_verification.execute", side_effect=self.dispatch), \
              patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
@@ -79,6 +87,11 @@ class LayoutVerificationTest(VerificationFixture):
              patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
             result = verify(self.run)
         self.assertEqual(result["failed_stage"], "lvs")
+        self.assertEqual(status(self.run), "LVS_DONE")
+        with patch("analog_agent.layout_verification.execute", side_effect=self.dispatch), \
+             patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
+            repeated = verify(self.run)
+        self.assertEqual(repeated["failed_stage"], "lvs")
         self.assertEqual(status(self.run), "LVS_DONE")
 
     def test_rule_changed_during_tool_execution_requires_attention(self):

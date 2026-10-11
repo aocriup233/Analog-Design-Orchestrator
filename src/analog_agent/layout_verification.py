@@ -107,13 +107,21 @@ def verify(run: Path, *, session=None):
     session.require(run)
     if status(run) not in {"ROUTED", "DRC_DONE", "LVS_DONE"}:
         raise ValueError("Verification requires a routed run or a verified stage handoff")
-    cfg, _ = layout_context(run)
-    configured(run, "verify")
     executed = False
     try:
+        cfg, _ = layout_context(run)
+        configured(run, "verify")
         require_unchanged_floorplan(run, "verification", session=session)
         task = read_json(local_path(run, "task.json"))
         routing = _pinned(run, task["active_routing_result"])
+        review_ref = routing["inputs"]["routing_review"]
+        review = _pinned(run, review_ref)
+        if (task.get("active_routing_review") != review_ref or review["floorplan_freeze"] != task["active_floorplan_freeze"]
+                or review["constraints_freeze"] != task["active_constraints_freeze"]):
+            raise LayoutEvidenceError("Routing human review no longer binds the current frozen inputs")
+        historical = _pinned(run, routing["snapshot"])
+        if historical["sha256"] != routing["cellview_sha256"]:
+            raise LayoutEvidenceError("Pinned routed snapshot identity differs from its result")
         full = snapshot(run, cfg)
         if full["sha256"] != routing["cellview_sha256"]:
             raise LayoutEvidenceError("Cellview changed since routing")
@@ -121,6 +129,8 @@ def verify(run: Path, *, session=None):
             raise ValueError("Unrouted nets remain; layout cannot be certified")
         export = _export(run, full["sha256"]) if status(run) == "ROUTED" else _pinned(run, task["active_drc_report"])["export"]
         _unchanged_export(run, export)
+        if status(run) == "LVS_DONE" and not _pinned(run, task["active_lvs_report"])["clean"]:
+            return {"status": status(run), "clean": False, "failed_stage": "lvs", "report": task["active_lvs_report"]}
         for stage, start, end in (("drc", "ROUTED", "DRC_DONE"), ("lvs", "DRC_DONE", "LVS_DONE")):
             if status(run) != start:
                 continue
@@ -128,6 +138,8 @@ def verify(run: Path, *, session=None):
                 drc = _pinned(run, read_json(local_path(run, "task.json"))["active_drc_report"])
                 if not drc["clean"]:
                     return {"status": status(run), "clean": False, "failed_stage": "drc"}
+                if verification_inputs(run.parent.parent, cfg, "drc", list(drc["rule_sha256"]))["rule_sha256"] != drc["rule_sha256"]:
+                    raise LayoutEvidenceError("DRC rules changed before LVS resume")
             section = cfg[stage]
             declared = execute(run, "verify", {"phase": "inputs", "stage": stage, "tool": cfg["tool"], "config": section})
             fields(declared, {"used_files", "version"})

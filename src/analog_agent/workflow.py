@@ -38,7 +38,10 @@ def invoke_json_role(role: str, config: dict, context: Path, output: Path, cwd: 
             process.communicate(timeout=timeout)
         except subprocess.TimeoutExpired as exc:
             if os.name == "nt":
-                subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10, check=False)
+                try:
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10, check=False)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
             else:
                 try:
                     os.killpg(process.pid, signal.SIGKILL)

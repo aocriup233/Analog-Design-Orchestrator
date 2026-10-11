@@ -49,3 +49,19 @@ class RoutingSchemaTest(unittest.TestCase):
         self.context["constraints"]["constraints"] = [{"kind": "max_vias", "nets": ["A"], "max_count": 0}]
         with self.assertRaisesRegex(ValueError, "via count"):
             validate_plan(self.plan, self.context, {"grid_nm": 1})
+
+    def test_symmetric_geometry_is_not_just_a_declaration(self):
+        self.context["allowed_nets"] = ["A", "B"]
+        self.context["nets"].append("B")
+        self.context["constraints"]["constraints"] = [
+            {"kind": "symmetric_routing", "pairs": [["A", "B"]]},
+            {"kind": "symmetry", "axis": {"direction": "x", "coordinate_nm": 0}}]
+        self.plan["net_order"] = ["A", "B"]
+        self.plan["symmetric_pairs"] = [["A", "B"]]
+        partner = copy.deepcopy(self.plan["routes"][0])
+        partner.update(id="routeB", net="B", guide_points=[[0, 0], [-100, 0]])
+        self.plan["routes"].append(partner)
+        validate_plan(self.plan, self.context, {"grid_nm": 1})
+        partner["guide_points"][1][0] = -90
+        with self.assertRaisesRegex(ValueError, "mirror"):
+            validate_plan(self.plan, self.context, {"grid_nm": 1})
