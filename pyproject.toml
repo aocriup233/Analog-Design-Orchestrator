@@ -13,6 +13,7 @@ dependencies = []
 [project.optional-dependencies]
 bridge = ["virtuoso-bridge"]
 analysis = ["numpy>=1.23", "matplotlib>=3.7"]
+bo = ["botorch>=0.13", "gpytorch", "torch", "scipy"]
 
 [project.scripts]
 analog-agent = "analog_agent.cli:main"
