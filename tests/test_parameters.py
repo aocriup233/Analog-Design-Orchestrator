@@ -9,6 +9,31 @@ from analog_agent.core import create_run, write_json
 
 
 class ParameterTest(unittest.TestCase):
+    def test_spectre_scale_factors_are_case_sensitive(self):
+        factors = {"T": 1e12, "G": 1e9, "M": 1e6, "K": 1e3, "k": 1e3,
+                   "m": 1e-3, "u": 1e-6, "n": 1e-9, "p": 1e-12, "f": 1e-15, "a": 1e-18}
+        for suffix, expected in factors.items():
+            with self.subTest(suffix=suffix):
+                self.assertEqual(number_value("1" + suffix), expected)
+        self.assertGreater(number_value("1M"), number_value("1k"))
+        self.assertLess(number_value("1m"), number_value("1"))
+        for suffix in ("t", "g", "U", "N", "P", "F", "A", "meg", "MEG"):
+            with self.subTest(suffix=suffix), self.assertRaises(ValueError):
+                number_value("1" + suffix)
+
+    def test_case_sensitive_bounds_and_rendered_value(self):
+        schema = {"type": "number", "min": "1k", "max": "2M"}
+        self.assertEqual(validate_value("R", "1M", schema), "1M")
+        with self.assertRaisesRegex(ValueError, "outside"):
+            validate_value("R", "1m", schema)
+        self.assertEqual(validate_value("R", "1m", {"type": "number", "min": "1m", "max": "1"}), "1m")
+        with self.assertRaisesRegex(ValueError, "outside"):
+            validate_value("R", "1M", {"type": "number", "max": "1k"})
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "template.scs"
+            source.write_text("parameters R=@@R@@")
+            self.assertEqual(_render(source, {"R": "1M"}, {"R": schema}), "parameters R=1M")
+
     def test_injections_all_entry_points(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

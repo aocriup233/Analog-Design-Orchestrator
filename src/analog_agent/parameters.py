@@ -5,15 +5,17 @@ import re
 
 _ATOM = re.compile(r"[A-Za-z0-9_+./*()^<>=:,\-]+")
 _NUMBER = re.compile(r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?)([a-zA-Z]*)")
-_SCALE = {"": 1, "t": 1e12, "g": 1e9, "meg": 1e6, "k": 1e3,
+# Spectre scale factors are case-sensitive: M is mega, m is milli.
+# Do not accept SPICE's meg alias in this Spectre parameter contract.
+_SCALE = {"": 1, "T": 1e12, "G": 1e9, "M": 1e6, "K": 1e3, "k": 1e3,
           "m": 1e-3, "u": 1e-6, "n": 1e-9, "p": 1e-12, "f": 1e-15, "a": 1e-18}
 
 
 def number_value(value: str) -> float:
     match = _NUMBER.fullmatch(value)
-    if not match or match[2].lower() not in _SCALE:
+    if not match or match[2] not in _SCALE:
         raise ValueError(f"Expected a finite numeric parameter, got {value!r}")
-    result = float(match[1]) * _SCALE[match[2].lower()]
+    result = float(match[1]) * _SCALE[match[2]]
     if not math.isfinite(result):
         raise ValueError("Numeric parameter must be finite")
     return result
