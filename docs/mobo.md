@@ -150,6 +150,12 @@ hypervolume, with comparison/point identity, parameters and reason recorded in
 Malformed values, unknown parameters and incompatible enum/schema changes remain
 errors; this is not permission to mix different circuit or metric semantics.
 
+`meta.failure_rate` is the hard-failure fraction of retained history (not measured
+specification failures). Above `bo.failure_warning_threshold` (default 0.5,
+range [0,1]), `meta.warnings` recommends checking netlist/simulation configuration.
+Empty retained history has rate zero. The warning is advisory: it does not submit,
+stop a campaign, or silently replace cold-start Sobol with a trained model.
+
 Fixed `bo.seed` (default 0), CPU double precision, one Torch thread and deterministic
 Torch operations provide repeatable proposal JSON bytes for identical input
 artifacts, paths, dependency versions and hardware. RNG states/thread settings

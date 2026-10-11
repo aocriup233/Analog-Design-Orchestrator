@@ -293,6 +293,12 @@ def propose(context: dict) -> dict:
             "config_sha256": hashlib.sha256(json.dumps(cfg, sort_keys=True).encode()).hexdigest(),
             "mode": "cold_start" if cold else "mobo", "batch_size": q,
             "enum_strategy": "enumerated one-hot", "review_required": True}
+    threshold = float(bo.get("failure_warning_threshold", 0.5))
+    if not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        raise ValueError("bo.failure_warning_threshold must be in [0, 1]")
+    meta["failure_rate"] = meta["hard_failure_count"] / len(rows) if rows else 0.0
+    meta["warnings"] = (["High hard-failure rate; inspect netlist and simulation configuration before further sampling."]
+                        if rows and meta["failure_rate"] > threshold else [])
     try:
         if cold:
             candidates = seed_points[:q]

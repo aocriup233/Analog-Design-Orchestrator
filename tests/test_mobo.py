@@ -168,6 +168,23 @@ assert not any(name in sys.modules for name in ('torch','gpytorch','botorch','sc
         with self.assertRaisesRegex(ValueError, "remaining"):
             propose({**self.context, "policy": {"max_total_points": 2}})
 
+    @unittest.skipUnless(SCIPY_AVAILABLE, "optional scipy")
+    def test_hard_failure_warning_in_cold_start(self):
+        rows = [{"parameters": {"x": str(x), "y": ".1"}, "state": "FAILED"}
+                for x in (.1, .2, .3)]
+        write_json(self.campaign / "cycle-0001_comparison.json", {"points": rows})
+        result = propose(self.context)
+        self.assertEqual(result["meta"]["mode"], "cold_start")
+        self.assertEqual(result["meta"]["failure_rate"], 1)
+        self.assertIn("netlist", result["meta"]["warnings"][0])
+        self.cfg["campaign"]["bo"]["failure_warning_threshold"] = 1
+        self.save()
+        self.assertEqual(propose(self.context)["meta"]["warnings"], [])
+        self.cfg["campaign"]["bo"]["failure_warning_threshold"] = 2
+        self.save()
+        with self.assertRaisesRegex(ValueError, "failure_warning_threshold"):
+            propose(self.context)
+
     @unittest.skipUnless(BO_AVAILABLE, "optional BO stack")
     def test_warm_determinism_and_infeasible_classifier(self):
         rows = self.comparison([(0.1, .1), (.3, .15), (.5, .05), (.7, .2), (.9, .8)])
