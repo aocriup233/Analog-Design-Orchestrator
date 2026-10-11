@@ -38,10 +38,9 @@ class LayoutFloorplanFixture(LayoutRunsFixture):
         self.addCleanup(self.reader.stop)
 
     def pending(self):
-        # L2 is not implemented; fixtures walk the state table, never fabricate
-        # a public constraints CLI or silently bypass its future human gate.
-        for state in ("CONSTRAINTS_DRAFTED", "CONSTRAINTS_FROZEN", "FLOORPLAN_PENDING"):
-            transition(self.run, state)
+        from analog_agent.layout_constraints import constraints_draft, constraints_freeze
+        constraints_draft(self.run)
+        constraints_freeze(self.run, "reviewed fixture constraints")
 
     def freeze(self):
         self.pending()

@@ -34,7 +34,8 @@ def numeric(value, *, positive=False):
 
 
 def validate_constraints(document, *, leading=False):
-    if not isinstance(document, dict) or set(document) != {"schema_version", "constraints"} or document["schema_version"] != 1:
+    if (not isinstance(document, dict) or set(document) != {"schema_version", "constraints"}
+            or type(document["schema_version"]) is not int or document["schema_version"] != 1):
         raise ValueError("Constraints require schema_version 1 and constraints array")
     if not isinstance(document["constraints"], list) or len(document["constraints"]) > 10000:
         raise ValueError("Invalid constraints array")
@@ -48,7 +49,7 @@ def validate_constraints(document, *, leading=False):
         "max_vias": {"nets", "max_count"},
     }
     for original in document["constraints"]:
-        if not isinstance(original, dict) or original.get("kind") not in fields:
+        if not isinstance(original, dict) or not isinstance(original.get("kind"), str) or original["kind"] not in fields:
             raise ValueError("Unknown constraint kind")
         item = json.loads(json.dumps(original, allow_nan=False))
         kind = item["kind"]
@@ -139,10 +140,14 @@ def topology(text, detection=None):
               "capacitor": {"kind": "capacitor", "terminals": ["p", "n"]}}
     models.update(detection.get("models", {}))
     blocks, current, warnings = {"": {"ports": [], "devices": []}}, "", []
+    globals_ = {"0"}
     logical = text.replace("\\\n", " ")
     for lineno, line in enumerate(logical.splitlines(), 1):
         line = line.split("//", 1)[0].strip()
         if not line or line.startswith("*"):
+            continue
+        if line.startswith("global "):
+            globals_.update(line.split()[1:])
             continue
         header = re.fullmatch(r"subckt\s+(\w+)\s*\(([^)]*)\)", line)
         if header:
@@ -180,7 +185,7 @@ def topology(text, detection=None):
             if name in seen:
                 raise ValueError("Duplicate netlist instance")
             seen.add(name)
-            nodes = [mapping.get(n, prefix + n) for n in device["nodes"]]
+            nodes = [n if n in globals_ else mapping.get(n, prefix + n) for n in device["nodes"]]
             if device["model"] in blocks:
                 sub = blocks[device["model"]]
                 if device["params"] or len(nodes) != len(sub["ports"]):
@@ -214,6 +219,8 @@ def detect_constraints(graph):
         elif a["kind"] in {"mos", "bjt"}:
             control, output, common = ("g", "d", "s") if a["kind"] == "mos" else ("b", "c", "e")
             at, bt = a["terms"], b["terms"]
+            if any(at[t] != bt[t] for t in at.keys() - {control, output, common}):
+                continue
             if at[common] == bt[common] and at[control] != bt[control] and at[output] != bt[output]:
                 kinds.append("differential_pair")
             if at[common] == bt[common] and at[control] == bt[control] and (at[control] == at[output] or bt[control] == bt[output]):
@@ -278,7 +285,11 @@ def constraints_draft(run: Path):
     with layout_lock(run):
         if status(run) not in {"LAYOUT_PREPARED", "CONSTRAINTS_DRAFTED"}:
             raise ValueError("Constraint drafting requires LAYOUT_PREPARED or CONSTRAINTS_DRAFTED")
-        _, document = _inputs(run)
+        try:
+            _, document = _inputs(run)
+        except LayoutEvidenceError as exc:
+            _constraint_attention(run, exc)
+            raise
         path = local_path(run, "layout_constraints.draft.json")
         write_json(path, document)
         ref = {"path": path.name, "sha256": sha256(path)}

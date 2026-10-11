@@ -218,7 +218,7 @@ Use [waveform_tool.py](agents/analysis/scripts/waveform_tool.py) with the JSON r
 
 ## Roadmap (not yet part of the released workflow)
 
-### Layout: L1 manual-floorplan framework (opt-in)
+### Layout: L1/L2 manual-floorplan and constraint framework (opt-in)
 
 `analog-agent layout prepare SCHEMATIC_RUN_DIR` creates a separate hash-linked
 layout run from a VERIFIED/ANALYZED schematic. Private layout configuration,
@@ -226,15 +226,18 @@ strict layout states and manual placement export/freeze are described in
 [the L1 contract](docs/layout.md). A complete audited read-only Bridge adapter
 is required; the supplied private example deliberately fails until implemented.
 No ADO operation moves manual instances or falls back to arbitrary SKILL/shell.
-Freeze retains the constraints human gate; L2-L4 are not implemented, so L1
-cannot yet execute the complete production state sequence or certify a layout.
+L2 adds deterministic topology candidates, bounded reviewed-memory retrieval,
+user overrides, a hashed human constraints-freeze gate, and advisory manual
+placement checks. See [the L2 schema and review workflow](docs/layout-constraints.md).
+L3/L4 routing and verification remain unimplemented; these stages do not certify
+a layout or modify placement.
 Plugins and `role_commands` are trusted code/config, not sandboxes; LLM roles
 are restricted to JSON proposals, with no Bridge capability or foundry rules.
 Keep `private/`, `runs/` and `layouts/` ignored in user project repositories.
 
 - **PVT and Monte Carlo:** add declarative corner, temperature, supply, variation and sample/seed configuration, with bounded scheduling, per-point provenance, partial-failure recovery, and cross-corner/statistical analysis. `virtuoso-bridge` already exposes Maestro controls, but ADO does **not** yet turn Maestro PVT/MC setup, execution and result collection into a portable, tested role workflow. The netlist-driven and Maestro-driven paths should share run evidence and analysis contracts while keeping PDK-specific corners and models private.
 - **Bayesian optimization extensions:** the optional multi-objective proposer now suggests reviewed batches from all cycle comparisons. Online model reuse, larger categorical spaces, trust-region search and multi-fidelity modeling remain future work. Initial points, objectives, specifications and stop decisions remain user/project-owned; no proposal replaces deterministic worker handoffs or auto-submits.
-- **Layout execution:** after the L1 manual-floorplan framework, add reviewed constraints, typed routing, DRC/LVS/PEX and post-layout feedback as separate stages. No live layout execution or verification is certified by the current fake-backend tests.
+- **Layout execution:** after the L1/L2 manual-floorplan and reviewed-constraint framework, add typed routing, DRC/LVS/PEX and post-layout feedback as separate stages. No live layout execution or verification is certified by the current fake-backend tests.
 
 These items will be promoted only after repeated real-project tests; structural/API availability alone is not electrical or workflow validation.
 

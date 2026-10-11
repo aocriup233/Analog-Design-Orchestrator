@@ -69,3 +69,37 @@ the current state unchanged. After freezing, changes require a new linked run;
 drafts and inherited evidence never grant active approval. Later consumers
 must verify the frozen receipt and source hashes under one layout lock and
 include its SHA-256 in their own handoff. No command runs routing or DRC/LVS.
+
+## Manual placement checks
+
+After a successful manual `floorplan-freeze`, a check runs under the same held
+lock. `analog-agent layout constraints-check RUN` repeats it without calling
+Bridge or moving instances. `floorplan_check.json` and its task reference pin
+the active floorplan and constraint receipt hashes and placement identity.
+Checks use canonical integer-nm bboxes:
+
+- symmetry reflects bbox centers about the declared x/y axis, comparing both
+  centers and extents within tolerance; device orientation/internal geometry
+  is not proven by this check;
+- common-centroid requires at least two explicit groups of equal-master,
+  equal-parameter, equal-extent units, equal group centroids and a centrally
+  symmetric unit-center pattern in each group;
+- interdigitation checks alternation along a single horizontal row;
+- keep-outs warn on bbox/interior overlap; touching a boundary is allowed;
+- absent referenced instances, unequal matching units and coincident centers
+  are warnings, never automatic repair instructions.
+
+These are advisory necessary geometric checks, not a complete matching proof.
+Equal unit weighting is assumed; multiplicity must be expanded into individual
+placement records. Higher-order gradient cancellation, dummy strategy,
+orientation, routing/shielding/width/spacing/via counts and foundry verification
+remain unverified (L3 or a future checker). Style `none` creates no pattern
+claim. Warnings do not prevent a human freeze or silently alter placement.
+
+The floorplan freeze embeds the active constraint receipt reference. Both live
+placement checkpoints and frozen checks revalidate constraint sources before
+use. Changed/tampered frozen evidence enters NEEDS_ATTENTION; a live placement
+change still follows the L1 FLOORPLAN_PENDING rule. Future L3 workers must
+carry both hashes and hold one lock across checks, use and postconditions.
+Legacy L1-only freezes without the constraint link are refused, not migrated
+or silently approved; prepare/clone a new run and pass both human gates.

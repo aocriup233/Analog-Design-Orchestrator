@@ -14,6 +14,7 @@ from . import memory as project_memory
 from .layout_runs import clone_layout, layout_context, layout_path, lock_info, prepare_layout
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
 from .layout_constraints import constraints_draft, constraints_freeze
+from .layout_placement_check import floorplan_constraints_check
 from .netlist_agent import prepare
 from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
@@ -108,7 +109,7 @@ def main() -> int:
     layout_prepare.add_argument("schematic", type=Path)
     layout_prepare.add_argument("--allow-failing-design", action="store_true")
     layout_prepare.add_argument("--reason", default="")
-    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-freeze", "floorplan-check"):
+    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-freeze", "floorplan-check", "constraints-check"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
         if name in {"floorplan-freeze", "constraints-freeze"}:
@@ -226,6 +227,8 @@ def main() -> int:
             output = constraints_draft(args.run)
         elif args.layout_command == "constraints-freeze":
             output = constraints_freeze(args.run, args.reason)
+        elif args.layout_command == "constraints-check":
+            output = floorplan_constraints_check(args.run)
         elif args.layout_command == "floorplan-freeze":
             output = floorplan_freeze(args.run, args.reason)
         else:
