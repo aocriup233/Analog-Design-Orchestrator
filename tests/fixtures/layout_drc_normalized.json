@@ -1,0 +1,1 @@
+{"schema_version":1,"stage":"drc","tool":"calibre","completed":true,"counts_by_rule":{"spacing":1},"violations":[{"id":"spacing_1","rule":"spacing","layer":"metal","bbox":[[0,0],[10,10]],"message":"fixture spacing violation","nets":["0"]}],"lvs_match":null}
