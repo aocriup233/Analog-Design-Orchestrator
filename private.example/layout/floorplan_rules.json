@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "units": "nm",
+  "rows": [],
+  "regions": [],
+  "symmetry_axes": [],
+  "matching_patterns": [],
+  "spacing": [],
+  "guard_rings": [],
+  "keep_outs": [],
+  "pin_sides": [],
+  "targets": {},
+  "objective_weights": {}
+}

@@ -77,7 +77,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     if not isinstance(document, dict) or set(document) != {"layout"}:
         raise ValueError("Private layout config must contain only a layout object")
     cfg = document["layout"]
-    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection", "tech_summary", "verification_adapter", "max_fix_iterations", "lvs_source", "verification_success_markers"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection", "tech_summary", "verification_adapter", "max_fix_iterations", "lvs_source", "verification_success_markers", "floorplan"}:
         raise ValueError("Unknown layout configuration fields")
     if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
@@ -140,6 +140,23 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
         from .layout_routing import validate_tech
         validate_tech(cfg["tech_summary"])
     manifest = {CONFIG_PATH: hashlib.sha256(data).hexdigest()}
+    floorplan = cfg.get("floorplan", {})
+    if not isinstance(floorplan, dict) or set(floorplan) - {"mode", "generator"} or not isinstance(floorplan.get("mode", "manual"), str) or floorplan.get("mode", "manual") not in {"manual", "plugin"}:
+        raise ValueError("floorplan permits mode=manual|plugin and generator")
+    generator = floorplan.get("generator")
+    if floorplan.get("mode", "manual") == "plugin":
+        if not isinstance(generator, str) or ":" not in generator or not generator.rsplit(":", 1)[0].endswith(".py"):
+            raise ValueError("Plugin floorplan requires a project-local path.py:function generator")
+    elif generator is not None:
+        raise ValueError("Manual floorplan must not configure a generator")
+    from .layout_floorplan_rules import RULES_PATH, validate_rules
+    rules_path = local_path(root, RULES_PATH)
+    if floorplan.get("mode", "manual") == "plugin" or rules_path.exists():
+        if not rules_path.is_relative_to(root / "private"):
+            raise ValueError("Floorplan rules must stay private")
+        rules_raw = rules_path.read_bytes()
+        validate_rules(json.loads(rules_raw), leading=leading)
+        manifest[RULES_PATH] = hashlib.sha256(rules_raw).hexdigest()
     markers = cfg.get("verification_success_markers", {})
     if (not isinstance(markers, dict) or set(markers) - {"drc", "lvs"}
             or any(not isinstance(values, list) or not values or not all(isinstance(v, str) and v.strip() and "\n" not in v and "\r" not in v for v in values)
@@ -160,7 +177,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     elif not isinstance(source, dict):
         raise ValueError("lvs_source must be an object")
     for reference in (bridge.get("reader"), bridge.get("operations"), cfg.get("verification_adapter"),
-                      source.get("generator"), source.get("normalizer")):
+                      source.get("generator"), source.get("normalizer"), generator):
         if reference is None:
             continue
         if not isinstance(reference, str) or ":" not in reference:
