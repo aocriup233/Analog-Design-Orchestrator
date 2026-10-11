@@ -102,3 +102,16 @@ of its signature; owners must audit configured plugins and their dependencies.
 The echo plugin is deliberately import-light and does not invoke EDA tools.
 No automatic placement algorithm, live router, foundry verification or remote
 deployment is claimed. Manual mode and all previous human gates remain intact.
+
+## Read-only placement diff
+
+`analog-agent layout floorplan-diff RUN` compares the latest generated candidate
+(or manual export when there is no generation) with a fresh typed live read.
+It lists canonical instance names, target origins in nm, orientations, differing
+bboxes/masters/PCell parameters, missing/extra instances and pin/label/boundary
+differences. It never moves anything, overwrites the candidate, freezes or
+changes a healthy run's state. Empty diff exits 0; nonempty diff exits 1.
+Generation retains a hash-pinned full candidate so a failed freeze's live export
+does not erase the target. Older generations without that retained snapshot
+must be regenerated if their candidate export was overwritten. Diff is an
+advisory snapshot, not permission: freeze still performs its own live check.

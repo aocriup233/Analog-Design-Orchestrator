@@ -32,6 +32,8 @@ def check_generation(run, floorplan, reference):
 def _check_generation(run, floorplan, reference):
     cfg, _ = layout_context(run)
     proof = _pinned(run, reference)
+    if proof.get("candidate") and _pinned(run, proof["candidate"]) != floorplan:
+        raise LayoutEvidenceError("Immutable candidate snapshot changed")
     inputs = read_json(local_path(run, "layout_inputs.json"))
     location = cfg["floorplan"]["generator"].rsplit(":", 1)[0]
     path = local_path(run.parent.parent, location).relative_to(run.parent.parent).as_posix()
@@ -114,12 +116,15 @@ def floorplan_generate(run: Path, *, placement: Path | None = None):
                     raise LayoutEvidenceError("User placement input disappeared during generation") from exc
                 if not unchanged:
                     raise LayoutEvidenceError("User placement input changed during generation")
+            candidate_ref = publish(run, "floorplan_candidates", candidate)
             proof = publish(run, "floorplan_generations", {"schema_version": 1,
+                "candidate": candidate_ref,
+                "floorplan": candidate,
                 "candidate_sha256": digest(candidate), "plugin_sha256": plugin_hash,
                 "rules_sha256": rule_hash, "inputs_sha256": context["inputs_sha256"],
                 "constraints_freeze": constraints["reference"], "user_placement": entry})
             reference = {**_publish(run, candidate), "generation": proof}
-            update_status(run, status(run), floorplan_export=reference)
+            update_status(run, status(run), floorplan_export=reference, active_floorplan_generation=proof)
             return {**reference, "status": status(run), "applied": False}
         except Exception as exc:
             _attention(run, exc)

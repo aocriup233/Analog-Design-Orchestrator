@@ -14,6 +14,7 @@ from . import memory as project_memory
 from .layout_runs import clone_layout, layout_context, layout_path, lock_info, prepare_layout
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
 from .layout_floorplan_plugin import floorplan_generate
+from .layout_floorplan_diff import floorplan_diff
 from .layout_constraints import constraints_draft, constraints_freeze
 from .layout_placement_check import floorplan_constraints_check, routing_review
 from .layout_routing import propose_routing
@@ -114,7 +115,7 @@ def main() -> int:
     layout_prepare.add_argument("schematic", type=Path)
     layout_prepare.add_argument("--allow-failing-design", action="store_true")
     layout_prepare.add_argument("--reason", default="")
-    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-generate", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
+    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-generate", "floorplan-diff", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
         if name == "floorplan-generate":
@@ -237,6 +238,8 @@ def main() -> int:
             output = floorplan_export(args.run)
         elif args.layout_command == "floorplan-generate":
             output = floorplan_generate(args.run, placement=args.placement)
+        elif args.layout_command == "floorplan-diff":
+            output = floorplan_diff(args.run)
         elif args.layout_command == "constraints":
             output = constraints_draft(args.run)
         elif args.layout_command == "constraints-freeze":
@@ -279,6 +282,8 @@ def main() -> int:
                 run_config(args.run).get("workflow", {}).get("return_mode") != "full"):
             output = {k: v for k, v in output.items() if k != "data"}
     print(json.dumps(output, ensure_ascii=False, indent=2))
+    if args.command == "layout" and args.layout_command == "floorplan-diff" and not output["empty"]:
+        return 1
     if args.command == "layout" and args.layout_command == "floorplan-freeze" and output.get("status") != "FLOORPLAN_FROZEN":
         return 1
     if args.command == "layout" and args.layout_command in {"verify", "fix"} and not output.get("clean", False):

@@ -292,17 +292,25 @@ def floorplan_freeze(run: Path, reason: str) -> dict:
             from .layout_constraints import frozen_constraints
             constraints = frozen_constraints(run, session=session)
             export = read_json(local_path(run, "task.json")).get("floorplan_export", {})
+            generation = read_json(local_path(run, "task.json")).get("active_floorplan_generation")
             if not export:
                 raise ValueError("Export and review a floorplan before freezing")
-            path = local_path(run, "floorplan.json")
-            if export.get("path") != "floorplan.json" or not path.is_file() or sha256(path) != export.get("sha256"):
-                raise LayoutEvidenceError("Review the current exported floorplan before freezing; evidence changed")
-            try:
-                reviewed = validate_floorplan(read_json(path), cfg)
-            except (ValueError, OSError) as exc:
-                raise LayoutEvidenceError("Reviewed placement evidence is invalid") from exc
-            if placement_sha256(reviewed) != export.get("placement_sha256"):
-                raise LayoutEvidenceError("Reviewed placement hash mismatch")
+            if generation:
+                from .layout_floorplan_diff import reviewed_candidate
+                from .layout_constraints import _pinned
+                reviewed, _ = reviewed_candidate(run, cfg)
+                proof = _pinned(run, generation)
+                export = {"sha256": proof["candidate"]["sha256"], "generation": generation}
+            else:
+                path = local_path(run, "floorplan.json")
+                if export.get("path") != "floorplan.json" or not path.is_file() or sha256(path) != export.get("sha256"):
+                    raise LayoutEvidenceError("Review the current exported floorplan before freezing; evidence changed")
+                try:
+                    reviewed = validate_floorplan(read_json(path), cfg)
+                except (ValueError, OSError) as exc:
+                    raise LayoutEvidenceError("Reviewed placement evidence is invalid") from exc
+                if placement_sha256(reviewed) != export.get("placement_sha256"):
+                    raise LayoutEvidenceError("Reviewed placement hash mismatch")
             if reviewed["source"] == "plugin":
                 from .layout_floorplan_plugin import check_generation
                 check_generation(run, reviewed, export.get("generation"))
