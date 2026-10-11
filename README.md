@@ -8,6 +8,11 @@ an untrusted proposal interface: its argument arrays can execute arbitrary progr
 Only project owners should edit it. A timed-out submission must be reconciled,
 not blindly retried; terminating a worker does not cancel a scheduler job.
 
+JSON handoffs fsync the temporary file before atomic replacement, and fsync the
+containing directory before and after replacement on POSIX. Windows does not
+provide POSIX directory fsync: file contents are flushed there, but directory
+entry durability across power loss is not guaranteed by this Python API.
+
 [简体中文](README.zh-CN.md)
 
 ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory.

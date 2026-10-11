@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from pathlib import Path
 from typing import Any
 
@@ -64,12 +66,14 @@ def build_deck(design: Path, config: dict[str, Any], run: Path) -> dict[str, Any
     if not paths:
         raise ValueError("simulation.rules is empty")
     rules = []
+    statements = []
     for relative in paths:
         path = local_path(root, relative)
-        rule = read_json(path)
-        rules.append({"path": str(path), "sha256": sha256(path),
+        content = path.read_bytes()
+        rule = json.loads(content.decode("utf-8"))
+        rules.append({"path": str(path), "sha256": hashlib.sha256(content).hexdigest(),
                       "kind": rule.get("kind"), "name": rule.get("name")})
-    statements = [render_rule(read_json(Path(item["path"])), root, config) for item in rules]
+        statements.append(render_rule(rule, root, config))
     if len({line.split()[0] for line in statements}) != len(statements):
         raise ValueError("Duplicate analysis names")
     signals = simulation.get("save_signals", [])

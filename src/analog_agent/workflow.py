@@ -135,6 +135,8 @@ def invoke_role(role: str, run: Path) -> dict:
 
 def cleanup(run: Path) -> bool:
     run = run.resolve()
+    if read_json(run / "task.json").get("status") != "ANALYZED":
+        raise ValueError("Raw cleanup requires ANALYZED status")
     if not (run / "analysis_result.json").is_file():
         raise ValueError("Analysis result must exist before raw cleanup")
     raw = (run / "raw").resolve()
