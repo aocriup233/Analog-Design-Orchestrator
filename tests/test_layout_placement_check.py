@@ -93,9 +93,11 @@ class LayoutPlacementCheckTest(LayoutFloorplanFixture):
         receipt = read_json(self.run / result["path"])
         report = read_json(self.run / "floorplan_check.json")
         self.assertEqual(receipt["constraints_freeze"], report["constraints_freeze"])
-        self.assertEqual(report["floorplan_freeze"]["sha256"], result["sha256"])
+        self.assertEqual(sha256(self.run / receipt["placement_check"]["path"]), receipt["placement_check"]["sha256"])
         with layout_lock(self.run) as held:
             floorplan_constraints_check(self.run, session=held)
+            from analog_agent.layout_placement_check import routing_review
+            routing_review(self.run, "proceed-with-warnings", "accept current geometric warnings", session=held)
             require_unchanged_floorplan(self.run, "routing", session=held)
         with patch.object(sys, "argv", ["analog-agent", "layout", "constraints-check", str(self.run)]), \
              patch("sys.stdout", new_callable=io.StringIO) as output:

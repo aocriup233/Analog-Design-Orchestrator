@@ -45,7 +45,11 @@ class LayoutFloorplanFixture(LayoutRunsFixture):
     def freeze(self):
         self.pending()
         floorplan_export(self.run)
-        return floorplan_freeze(self.run, "reviewed manual fixture placement")
+        result = floorplan_freeze(self.run, "reviewed manual fixture placement")
+        from analog_agent.layout_placement_check import routing_review
+        routing_review(self.run, "proceed-with-warnings" if result["constraint_warnings"] else "proceed",
+                       "explicit fixture human routing decision")
+        return result
 
 
 class LayoutFloorplanTest(LayoutFloorplanFixture):

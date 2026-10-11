@@ -200,6 +200,11 @@ def _frozen_unchecked(run: Path, cfg: dict) -> dict:
     if (not isinstance(constraint_ref, dict) or receipt.get("constraints_freeze") != constraint_ref
             or sha256(local_path(run, constraint_ref["path"])) != constraint_ref["sha256"]):
         raise ValueError("Frozen placement constraint link is missing or changed")
+    from .layout_constraints import _pinned
+    check = _pinned(run, receipt.get("placement_check"))
+    if (check.get("placement_sha256") != receipt["placement_sha256"] or
+            check.get("constraints_freeze") != constraint_ref or check.get("inputs_sha256") != receipt["inputs_sha256"]):
+        raise ValueError("Frozen placement check identity mismatch")
     return receipt
 
 
@@ -254,6 +259,7 @@ def _floorplan_export_locked(run: Path, session) -> dict:
         changed = frozen is not None and receipt["placement_sha256"] != frozen["placement_sha256"]
         if changed:
             transition(run, "FLOORPLAN_PENDING", active_floorplan_freeze=None,
+                       active_routing_review=None,
                        message="Manual placement changed; routing/verification blocked until a new human freeze")
         return {**receipt, "status": status(run), "changed": changed}
     except Exception as exc:
@@ -284,20 +290,24 @@ def floorplan_freeze(run: Path, reason: str) -> dict:
                 raise LayoutEvidenceError("Reviewed placement evidence is invalid") from exc
             if placement_sha256(reviewed) != export.get("placement_sha256"):
                 raise LayoutEvidenceError("Reviewed placement hash mismatch")
+            from .layout_placement_check import build_check_report, publish_check_snapshot
+            report = build_check_report(reviewed, constraints, sha256(local_path(run, "layout_inputs.json")))
             live = _capture(run, cfg)
             if placement_sha256(live) != placement_sha256(reviewed):
                 _publish(run, live)
                 return {"status": "FLOORPLAN_PENDING", "changed": True,
                         "message": "Placement changed since export; review the new floorplan before freeze"}
+            check_reference = publish_check_snapshot(run, report)
             receipt = {"floorplan": reviewed, "floorplan_sha256": export["sha256"],
                        "placement_sha256": placement_sha256(reviewed),
                        "inputs_sha256": sha256(local_path(run, "layout_inputs.json")),
                        "constraints_freeze": constraints["reference"],
+                       "placement_check": check_reference,
                        "reason": reason.strip(), "frozen_at": utc_now()}
             destination = local_path(run, f"floorplan_freezes/{uuid.uuid4().hex}.json")
             write_json(destination, receipt)
             reference = {"path": destination.relative_to(run).as_posix(), "sha256": sha256(destination)}
-            transition(run, "FLOORPLAN_FROZEN", active_floorplan_freeze=reference)
+            transition(run, "FLOORPLAN_FROZEN", active_floorplan_freeze=reference, active_routing_review=None)
             from .layout_placement_check import floorplan_constraints_check
             checked = floorplan_constraints_check(run, session=session)
             return {**reference, "status": "FLOORPLAN_FROZEN", "placement_sha256": receipt["placement_sha256"],
@@ -330,4 +340,11 @@ def require_unchanged_floorplan(run: Path, checkpoint: str, *, session=None) -> 
         raise ValueError("Manual placement changed: FLOORPLAN_PENDING; review and freeze again before proceeding")
     if result["status"] not in allowed:
         raise ValueError("Layout state changed during the checkpoint; inspect current evidence")
+    if checkpoint == "routing":
+        from .layout_placement_check import require_routing_review
+        try:
+            result["routing_review"] = require_routing_review(run, session=session)
+        except Exception as exc:
+            _attention(run, exc)
+            raise
     return result

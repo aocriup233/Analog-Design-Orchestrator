@@ -94,8 +94,13 @@ include its SHA-256 in their own handoff. No command runs routing or DRC/LVS.
 
 After a successful manual `floorplan-freeze`, a check runs under the same held
 lock. `analog-agent layout constraints-check RUN` repeats it without calling
-Bridge or moving instances. `floorplan_check.json` and its task reference pin
-the active floorplan and constraint receipt hashes and placement identity.
+Bridge or moving instances. An immutable schema-2 `placement_checks/<uuid>.json`
+snapshot pins placement identity, input and constraint receipt hashes and the
+warning-set hash. The floorplan-freeze receipt embeds that snapshot's path and
+SHA-256. A repeated check recomputes and verifies it rather than replacing frozen
+evidence. `floorplan_check.json` is only a convenient readable copy. The report
+does not include its containing freeze receipt's hash, avoiding a circular hash
+dependency; the freeze receipt and human routing decision pin the full chain.
 Checks use canonical integer-nm bboxes:
 
 - symmetry reflects bbox centers about the declared x/y axis, comparing both
@@ -105,9 +110,11 @@ Checks use canonical integer-nm bboxes:
   equal-parameter, equal-extent units, equal group centroids and a centrally
   symmetric unit-center pattern in each group;
 - interdigitation checks alternation along a single horizontal row;
-- keep-outs warn on bbox/interior overlap; touching a boundary is allowed;
-- absent referenced instances, unequal matching units and coincident centers
-  are warnings, never automatic repair instructions.
+- keep-outs warn on bbox/interior overlap; touching a boundary is allowed by
+  this geometry check only, not proof of minimum spacing or a substitute for DRC;
+- missing user-referenced instances are hard errors before live freeze capture;
+  missing rule/memory members, unequal matching units and coincident centers
+  produce warnings, never automatic repair instructions.
 
 These are advisory necessary geometric checks, not a complete matching proof.
 Equal unit weighting is assumed; multiplicity must be expanded into individual
@@ -123,3 +130,24 @@ change still follows the L1 FLOORPLAN_PENDING rule. Future L3 workers must
 carry both hashes and hold one lock across checks, use and postconditions.
 Legacy L1-only freezes without the constraint link are refused, not migrated
 or silently approved; prepare/clone a new run and pass both human gates.
+
+## Explicit routing release (L2 gate only)
+
+`analog-agent layout routing-review RUN --decision proceed --reason TEXT`
+records a human decision after a clean check. If any placement warnings remain,
+the decision must be `proceed-with-warnings`; `proceed` or a reason alone is
+rejected. This command does not route, submit a job or advance to ROUTED.
+It rechecks frozen inputs and live placement under one lock and saves an
+immutable review receipt with the floorplan/constraint/check references and
+the exact warning-set hash. All routing checkpoints require this decision,
+even when clean; draft-warning acknowledgment is not routing authorization.
+No LLM worker may self-approve this gate. Future L3 workers must call the
+lock-held checkpoint before using the evidence and propagate the review hash.
+Movement or re-freeze clears the active decision; old files remain evidence.
+Tampering blocks release. Checks/freeze receipts from before this hash-chain
+and warning-confirmation contract are not silently migrated or auto-approved.
+
+Future matching metrics may quantify group second moments/dispersion and
+assumed spatial-gradient sensitivity, with units, weighting and provenance.
+Those numerical measures are intentionally not implemented by this L2 fix and
+would not by themselves establish electrical matching or foundry compliance.

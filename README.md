@@ -229,6 +229,9 @@ No ADO operation moves manual instances or falls back to arbitrary SKILL/shell.
 L2 adds deterministic topology candidates, bounded reviewed-memory retrieval,
 user overrides, a hashed human constraints-freeze gate, and advisory manual
 placement checks. See [the L2 schema and review workflow](docs/layout-constraints.md).
+Draft warnings require explicit acknowledgment; routing release is a separate
+hashed human decision, including explicit acceptance of outstanding placement
+warnings. A placement freeze alone never authorizes routing.
 L3/L4 routing and verification remain unimplemented; these stages do not certify
 a layout or modify placement.
 Plugins and `role_commands` are trusted code/config, not sandboxes; LLM roles

@@ -60,6 +60,7 @@ analog-agent layout constraints-freeze LAYOUT_RUN_DIR --reason "reviewed constra
 analog-agent layout floorplan-export LAYOUT_RUN_DIR
 analog-agent layout floorplan-freeze LAYOUT_RUN_DIR --reason "reviewed placement"
 analog-agent layout constraints-check LAYOUT_RUN_DIR
+analog-agent layout routing-review LAYOUT_RUN_DIR --decision proceed --reason "reviewed clean check"
 ```
 
 Layout runs live in `<project>/layouts/<id>/`, separately from schematic `runs/`.
@@ -98,6 +99,8 @@ manual placement changes. Schematic states cannot enter layout states. The
 presence of a state in the table is **not** an implementation of its worker:
 L1/L2 cannot fabricate routing or clean DRC/LVS. Exports before FLOORPLAN_PENDING
 are draft snapshots only. Freeze requires L2's hashed constraints human gate;
+draft warnings need `--ack-warnings`. Routing checkpoints require a separate
+human routing-review (`proceed-with-warnings` when placement warnings remain).
 tests use the real draft/freeze commands with fake placement readers. Production
 CLI does not bypass missing stages.
 

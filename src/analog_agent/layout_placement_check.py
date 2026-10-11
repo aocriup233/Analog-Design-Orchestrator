@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from decimal import Decimal
 from pathlib import Path
+import uuid
 
-from .core import local_path, read_json, sha256, update_status, write_json
-from .layout_constraints import frozen_constraints
+from .core import local_path, read_json, sha256, update_status, utc_now, write_json
+from .layout_constraints import frozen_constraints, digest, _pinned
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
 from .state import status
 
@@ -44,9 +45,11 @@ def check_placement(floorplan, document):
                 sizes = [tuple(i["bbox"][1][j] - i["bbox"][0][j] for j in (0, 1)) for i in pair]
                 if any(abs(reflected[j] - b[j]) > tolerance or abs(sizes[0][j] - sizes[1][j]) > tolerance for j in (0, 1)):
                     warn(item, "Bbox centers or extents violate the declared symmetry axis", names)
-        elif kind == "matching" and item["style"] != "none":
+        elif kind == "matching":
             groups = [members(item, names) for names in item["groups"]]
             if any(group is None for group in groups):
+                continue
+            if item["style"] == "none":
                 continue
             names = [name for group in item["groups"] for name in group]
             tolerance = Decimal(str(item["tolerance_nm"]))
@@ -89,6 +92,29 @@ def check_placement(floorplan, document):
     return warnings
 
 
+def build_check_report(floorplan, constraints, inputs_sha256):
+    from .layout_floorplan import placement_sha256
+    names = {i["instance"] for i in floorplan["instances"]}
+    for item in constraints["document"]["constraints"]:
+        references = ([n for group in item["groups"] for n in group] if item["kind"] == "matching" else
+                      [n for pair in item["pairs"] for n in pair] if item["kind"] == "symmetry" else [])
+        missing = sorted(set(references) - names)
+        if missing and item["source"] == "user":
+            raise ValueError(f"Orphan floorplan references in {item['id']}: {', '.join(missing)}")
+    warnings = check_placement(floorplan, constraints["document"])
+    return {"schema_version": 2, "status": "WARNINGS" if warnings else "NO_WARNINGS",
+            "warnings": warnings, "warnings_sha256": digest(warnings),
+            "placement_sha256": placement_sha256(floorplan), "inputs_sha256": inputs_sha256,
+            "constraints_freeze": constraints["reference"],
+            "not_checked": ["routing", "foundry DRC", "LVS", "higher-order matching", "orientation", "device-internal geometry"]}
+
+
+def publish_check_snapshot(run, report):
+    path = local_path(run, f"placement_checks/{uuid.uuid4().hex}.json")
+    write_json(path, report)
+    return {"path": path.relative_to(run).as_posix(), "sha256": sha256(path)}
+
+
 def floorplan_constraints_check(run: Path, *, session=None):
     run = layout_path(run)
     if session is None:
@@ -104,18 +130,66 @@ def floorplan_constraints_check(run: Path, *, session=None):
         floorplan = _frozen(run, cfg)
         if floorplan.get("constraints_freeze") != constraints["reference"]:
             raise LayoutEvidenceError("Floorplan was frozen against different constraints")
-        report = {"schema_version": 1, "status": "WARNINGS" if (warnings := check_placement(
-            floorplan["floorplan"], constraints["document"])) else "NO_WARNINGS",
-            "warnings": warnings, "placement_sha256": floorplan["placement_sha256"],
-            "constraints_freeze": constraints["reference"],
-            "floorplan_freeze": read_json(local_path(run, "task.json"))["active_floorplan_freeze"],
-            "not_checked": ["routing", "foundry DRC", "LVS", "higher-order matching", "device-internal geometry"]}
+        report = build_check_report(floorplan["floorplan"], constraints, floorplan["inputs_sha256"])
+        ref = floorplan.get("placement_check")
+        if not isinstance(ref, dict) or _pinned(run, ref) != report:
+            raise LayoutEvidenceError("Frozen placement check is missing or differs from recomputed evidence")
         path = local_path(run, "floorplan_check.json")
         write_json(path, report)
-        ref = {"path": path.name, "sha256": sha256(path)}
         update_status(run, status(run), floorplan_constraint_check=ref)
-        return {**ref, "status": report["status"], "warnings": warnings}
+        return {**ref, "status": report["status"], "warnings": report["warnings"]}
     except LayoutEvidenceError as exc:
         from .layout_constraints import _constraint_attention
         _constraint_attention(run, exc)
         raise
+
+
+def _routing_identity(run, checked):
+    task = read_json(local_path(run, "task.json"))
+    return {"floorplan_freeze": task["active_floorplan_freeze"],
+            "constraints_freeze": task["active_constraints_freeze"],
+            "placement_check": {k: checked[k] for k in ("path", "sha256")},
+            "warnings_sha256": digest(checked["warnings"])}
+
+
+def routing_review(run: Path, decision: str, reason: str, *, session=None):
+    """Human decision only; records authorization, never starts L3."""
+    run = layout_path(run)
+    if decision not in {"proceed", "proceed-with-warnings"} or not isinstance(reason, str) or not reason.strip():
+        raise ValueError("Routing review needs an explicit decision and reason")
+    if session is None:
+        with layout_lock(run) as held:
+            return routing_review(run, decision, reason, session=held)
+    session.require(run)
+    if status(run) != "FLOORPLAN_FROZEN":
+        raise ValueError("Routing review requires FLOORPLAN_FROZEN")
+    floorplan_constraints_check(run, session=session)
+    from .layout_floorplan import _floorplan_export_locked
+    live = _floorplan_export_locked(run, session)
+    if live["changed"]:
+        raise ValueError("Placement changed: FLOORPLAN_PENDING; re-freeze before routing review")
+    checked = floorplan_constraints_check(run, session=session)
+    expected = "proceed-with-warnings" if checked["warnings"] else "proceed"
+    if decision != expected:
+        raise ValueError(f"Current placement check requires explicit decision {expected}")
+    receipt = {**_routing_identity(run, checked), "decision": decision, "reason": reason.strip(),
+               "reviewed_at": utc_now()}
+    path = local_path(run, f"routing_reviews/{uuid.uuid4().hex}.json")
+    write_json(path, receipt)
+    ref = {"path": path.relative_to(run).as_posix(), "sha256": sha256(path)}
+    update_status(run, status(run), active_routing_review=ref)
+    return {**ref, "status": status(run), "decision": decision}
+
+
+def require_routing_review(run, *, session):
+    session.require(run)
+    checked = floorplan_constraints_check(run, session=session)
+    reference = read_json(local_path(run, "task.json")).get("active_routing_review")
+    if not isinstance(reference, dict):
+        raise ValueError("Routing blocked: explicit layout routing-review decision required")
+    receipt = _pinned(run, reference)
+    expected = "proceed-with-warnings" if checked["warnings"] else "proceed"
+    if (any(receipt.get(k) != v for k, v in _routing_identity(run, checked).items()) or
+            receipt.get("decision") != expected or not isinstance(receipt.get("reason"), str) or not receipt["reason"].strip()):
+        raise LayoutEvidenceError("Routing review does not match the current frozen check and warning set")
+    return reference
