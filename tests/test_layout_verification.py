@@ -4,13 +4,23 @@ from pathlib import Path
 from unittest.mock import patch
 
 from analog_agent.core import read_json, sha256, write_json
-from analog_agent.layout_verification import parse_report, verify
+from analog_agent.layout_verification import parse_report, verify, repair_action
 from analog_agent.layout_worker import route
 from analog_agent.state import status
 from test_layout_worker import LayoutWorkerFixture
 
 
 class VerificationParserTest(__import__("unittest").TestCase):
+    def test_mixed_placement_priority_and_diagnostic_manual_gate(self):
+        document = read_json(Path(__file__).parent / "fixtures/layout_drc_normalized.json")
+        report = {**parse_report(json.dumps(document).encode(), stage="drc", tool="calibre"), "stage": "drc"}
+        self.assertEqual(repair_action(report), "routing")
+        report["violations"].append({**copy.deepcopy(report["violations"][0]), "id": "placement", "repair": {"class": "placement", "reason": "device spacing"}})
+        self.assertEqual(repair_action(report), "placement")
+        report["violations"].pop()
+        report["diagnostics"]["extraction_errors"] = 1
+        self.assertEqual(repair_action(report), "manual")
+
     def test_conservative_clean(self):
         document = read_json(Path(__file__).parent / "fixtures/layout_lvs_normalized.json")
         for key in ("extraction_errors", "soft_connection_errors", "property_mismatches", "unknown_lines", "truncated"):
@@ -41,6 +51,7 @@ class VerificationFixture(LayoutWorkerFixture):
     def setUp(self):
         super().setUp()
         self.stage_clean = {"drc": True, "lvs": True}
+        self.repair_class = "routing"
         cfg = read_json(self.layout_config)["layout"]
         self.rule = Path(cfg["drc"]["rule_dir"]) / "fixture.rules"
         self.rule.write_text("opaque test fixture, never sent to planner", encoding="utf-8")
@@ -66,8 +77,8 @@ class VerificationFixture(LayoutWorkerFixture):
             clean = self.stage_clean[stage]
             document = {"schema_version": 2, "tool": "calibre", "stage": stage, "completed": True,
                         "counts_by_rule": {} if clean else {"spacing": 1},
-                        "violations": [] if clean else [{"id": "v1", "rule": "spacing", "layer": "metal", "bbox": [[0, 0], [10, 10]], "message": "fixture", "nets": ["0"]}],
-                        "lvs_match": None if stage == "drc" else clean,
+                        "violations": [] if clean else [{"id": "v1", "rule": "spacing", "layer": "metal", "bbox": [[0, 0], [10, 10]], "message": "fixture", "nets": ["0"], "repair": {"class": self.repair_class, "reason": "fixture audited classification"}}],
+                        "lvs_match": None if stage == "drc" else True,
                         "success_marker": {"found": True, "report": "native.txt", "line": 1, "text": f"FIXTURE {stage.upper()} COMPLETED"},
                         "diagnostics": {"extraction_errors": 0, "soft_connection_errors": 0, "property_mismatches": 0, "unknown_lines": 0, "truncated": False}}
             path = run / payload["output_dir"] / "normalized.json"
@@ -82,6 +93,25 @@ class VerificationFixture(LayoutWorkerFixture):
 
 
 class LayoutVerificationTest(VerificationFixture):
+    def test_placement_failure_returns_to_manual_gate(self):
+        self.stage_clean["drc"] = False
+        self.repair_class = "placement"
+        with patch("analog_agent.layout_verification.execute", side_effect=self.dispatch), patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
+            result = verify(self.run)
+        self.assertEqual(result["status"], "FLOORPLAN_PENDING")
+        task = read_json(self.run / "task.json")
+        self.assertIsNone(task["active_floorplan_freeze"])
+        self.assertTrue(task["active_constraints_freeze"])
+        self.assertEqual(task.get("fix_iterations", 0), 0)
+        self.assertFalse((self.run / "lvs_report.json").exists())
+
+    def test_unknown_failure_does_not_spend_fix_budget(self):
+        self.stage_clean["drc"] = False
+        self.repair_class = "unknown"
+        with patch("analog_agent.layout_verification.execute", side_effect=self.dispatch), patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
+            result = verify(self.run)
+        self.assertEqual(result["status"], "NEEDS_ATTENTION")
+        self.assertEqual(read_json(self.run / "task.json").get("fix_iterations", 0), 0)
     def test_fabricated_native_marker_rejected(self):
         def fabricated(run, operation, payload):
             receipt = self.dispatch(run, operation, payload)

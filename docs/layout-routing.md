@@ -146,6 +146,15 @@ unknown lines or truncation produce UNCERTAIN; any diagnostic error produces
 FAIL. Only explicit completion and zero errors/counts produce CLEAN. Legacy v1
 reports cannot certify clean and must be regenerated. These are adapter trust
 contracts; actual native parsers and sanitized native fixtures remain deferred.
+A violation also requires repair={class, reason}; class is routing, placement,
+manual or unknown, assigned by the audited private parser, not by rule-name
+heuristics or an LLM. Any placement violation (including mixed reports) returns
+to FLOORPLAN_PENDING, invalidates active floorplan/routing gates and preserves
+historical evidence without moving instances or spending a fix attempt.
+Uncertain reports, diagnostic errors, LVS mismatch and unknown/manual or
+unmapped violations enter NEEDS_ATTENTION. Only explicitly routing-fixable,
+mapped violations enter the bounded fix loop. Placement required during a fix
+still returns to FLOORPLAN_PENDING even when that attempt reaches the limit.
 A violation has unique id, rule, layer,
 ordered integer-nm bbox, message, mapped schematic nets. Counts must match the
 complete list; truncation/unparsed data cannot certify clean. DRC requires

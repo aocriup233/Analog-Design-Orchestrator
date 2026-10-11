@@ -19,6 +19,9 @@ def _failure(run):
     stage = "drc" if state == "DRC_DONE" else "lvs"
     ref = task[f"active_{stage}_report"]
     report = _pinned(run, ref)
+    from .layout_verification import repair_action
+    if repair_action(report) != "routing":
+        raise ValueError("Only explicitly classified routing violations may enter the fix loop")
     if report["clean"] or not report["violations"] or report["routing_result"] != task["active_routing_result"]:
         raise ValueError("No listed routing violations for the current result; manual attention required")
     for relative, expected in report["raw_reports"].items():
@@ -72,7 +75,7 @@ def apply_fix(run):
                        applied_fix=fix)
             route(run, session=session, fix=fix)
             result = verify(run, session=session)
-            if not result["clean"] and read_json(local_path(run, "task.json"))["fix_iterations"] >= cfg.get("max_fix_iterations", 3):
+            if not result["clean"] and status(run) in {"DRC_DONE", "LVS_DONE"} and read_json(local_path(run, "task.json"))["fix_iterations"] >= cfg.get("max_fix_iterations", 3):
                 transition(run, "NEEDS_ATTENTION", error={"kind": "FixLimit", "message": "Fix limit exhausted with verification violations",
                            "last_report": result["report"]})
                 return {**result, "status": "NEEDS_ATTENTION"}

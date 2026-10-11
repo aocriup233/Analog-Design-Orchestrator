@@ -8,7 +8,10 @@ Verification uses fixed argv, shell=False, process-group timeout/cancellation,
 and retains native reports plus strict schema-v2 normalization: exact native
 success-marker location and diagnostic counters, including unknown lines and
 truncation. Configure audited stage-specific verification_success_markers;
-never infer clean from an empty violation list alone. Both adapters are loaded
+never infer clean from an empty violation list alone. Each violation supplies
+repair={class: routing|placement|manual|unknown, reason: nonempty text}, using
+audited private rule mapping; never label device spacing as wire-fixable merely
+because its rule name mentions spacing. Both adapters are loaded
 through plugins.load_function. This example deliberately fails closed.
 """
 

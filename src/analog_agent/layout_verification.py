@@ -34,7 +34,10 @@ def parse_report(raw: bytes, *, stage, tool):
         raise ValueError("Violation list must be bounded")
     actual, ids = {}, set()
     for v in violations:
-        fields(v, {"id", "rule", "layer", "bbox", "message", "nets"})
+        fields(v, {"id", "rule", "layer", "bbox", "message", "nets", "repair"})
+        fields(v["repair"], {"class", "reason"})
+        if v["repair"]["class"] not in {"routing", "placement", "manual", "unknown"} or not isinstance(v["repair"]["reason"], str) or not v["repair"]["reason"].strip():
+            raise ValueError("Audited repair classification and reason required")
         if (not all(isinstance(v[k], str) and v[k] for k in ("id", "rule", "layer", "message"))
                 or v["id"] in ids or not isinstance(v["nets"], list) or not all(isinstance(n, str) and n for n in v["nets"])):
             raise ValueError("Invalid violation identity")
@@ -89,6 +92,18 @@ def _workdir(run, cfg, stage):
     destination = work / f"{stage}-{uuid.uuid4().hex}"
     destination.mkdir(exist_ok=False)
     return destination
+
+
+def repair_action(report):
+    """Audited private classification, never inferred from rule-name keywords."""
+    if any(v["repair"]["class"] == "placement" for v in report["violations"]):
+        return "placement"
+    if (report["verdict"] != "FAIL" or not report["violations"]
+            or any(report["diagnostics"].values())
+            or any(v["repair"]["class"] != "routing" or not v["nets"] for v in report["violations"])
+            or (report["stage"] == "lvs" and not report.get("lvs_match", False))):
+        return "manual"
+    return "routing"
 
 
 def _export(run, cellhash):
@@ -209,13 +224,22 @@ def verify(run: Path, *, session=None):
             if snapshot(run, cfg)["sha256"] != full["sha256"]:
                 raise LayoutEvidenceError("Cellview changed during verification")
             report = {"schema_version": 1, "stage": stage, "tool": cfg["tool"], "version": declared["version"],
-                **rules, **parsed, "cellview_sha256": full["sha256"], "placement_sha256": full["placement_sha256"],
+                **rules, **parsed, "lvs_match": json.loads(raw)["lvs_match"], "cellview_sha256": full["sha256"], "placement_sha256": full["placement_sha256"],
                 "routing_result": task["active_routing_result"], "export": export, "raw_reports": hashes,
                 "work_dir": str(work), "lvs_source": source_ref, "source_cdl_sha256": receipt["source_cdl_sha256"]}
             reference = publish(run, f"{stage}_reports", report)
             write_json(local_path(run, f"{stage}_report.json"), report)
             transition(run, end, **{f"active_{stage}_report": reference})
             if not report["clean"]:
+                action = repair_action(report)
+                error = {"kind": "PlacementRequired" if action == "placement" else "ManualVerificationRequired",
+                         "message": "Manual placement review required; routing cannot fix these violations" if action == "placement" else "Uncertain, diagnostic or unclassified failure requires manual review",
+                         "report": reference, "violations": [{"id": v["id"], **v["repair"]} for v in report["violations"]]}
+                if action == "placement":
+                    transition(run, "FLOORPLAN_PENDING", error=error, active_floorplan_freeze=None,
+                               active_routing_review=None, active_routing_plan=None, active_fix=None)
+                elif action == "manual":
+                    transition(run, "NEEDS_ATTENTION", error=error)
                 return {"status": status(run), "clean": False, "failed_stage": stage, "report": reference}
         current = read_json(local_path(run, "task.json"))
         drc, lvs = (_pinned(run, current[f"active_{s}_report"]) for s in ("drc", "lvs"))

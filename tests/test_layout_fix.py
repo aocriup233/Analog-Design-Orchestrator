@@ -15,6 +15,16 @@ from test_layout_verification import VerificationFixture
 
 
 class LayoutFixTest(VerificationFixture):
+    def test_placement_failure_at_fix_limit_preserves_pending(self):
+        self.fail_drc()
+        self.proposal()
+        update_status(self.run, status(self.run), fix_iterations=2)
+        self.repair_class = "placement"
+        with patch("analog_agent.layout_verification.execute", side_effect=self.dispatch), patch("analog_agent.layout_worker.execute", side_effect=self.dispatch):
+            result = apply_fix(self.run)
+        self.assertEqual(result["status"], "FLOORPLAN_PENDING")
+        self.assertEqual(status(self.run), "FLOORPLAN_PENDING")
+
     def fail_drc(self):
         self.stage_clean["drc"] = False
         with patch("analog_agent.layout_verification.execute", side_effect=self.dispatch), \
