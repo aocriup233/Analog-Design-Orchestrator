@@ -23,6 +23,7 @@ from typing import Any
 from .core import (create_run, load_config, local_path, private_manifest, read_json,
                    run_config, sha256, utc_now, write_json)
 from .plugins import load_function
+from .parameters import validate_value
 from .memory import brief_view as memory_brief_view, retrieve as retrieve_memory
 from .state import status as run_status
 from .workflow import cleanup, invoke_role
@@ -247,10 +248,7 @@ def _validate_points(manifest: dict, payload: dict, cfg: dict) -> list[dict]:
             value = point["parameters"].get(name, definition.get("initial"))
             if value is None or isinstance(value, (dict, list, bool)):
                 raise ValueError(f"Point {point_id} needs a scalar value for {name}")
-            value = str(value)
-            if "\n" in value or "\r" in value or "@" in value:
-                raise ValueError(f"Unsafe value for {name} in {point_id}")
-            values[name] = value
+            values[name] = validate_value(name, value, definition)
         testbench = point.get("testbench")
         benches = cfg.get("netlist", {}).get("testbenches", {})
         if testbench is not None and testbench not in benches:

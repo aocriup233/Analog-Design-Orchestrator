@@ -196,6 +196,13 @@ def create_run(config_path: Path, iteration: int, overrides: dict[str, str] | No
     maximum = int(runtime.get("workflow", {}).get("max_iterations", 1))
     if not 0 <= iteration < maximum:
         raise ValueError(f"iteration must be in [0, {maximum - 1}]")
+    from .parameters import validate_values
+    definitions = runtime.get("parameters", {})
+    overrides = validate_values(overrides or {}, definitions)
+    values = {name: (definition["candidates"][iteration]
+                    if iteration < len(definition.get("candidates", [])) else definition.get("initial"))
+              for name, definition in definitions.items()}
+    validate_values({**values, **overrides}, definitions)
     root = Path(runtime["_project_root"])
     if testbench is not None and testbench not in runtime.get("netlist", {}).get("testbenches", {}):
         raise ValueError(f"Unknown testbench: {testbench}")
