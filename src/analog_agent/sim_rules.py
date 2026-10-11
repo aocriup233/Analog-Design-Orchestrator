@@ -27,9 +27,11 @@ def render_rule(rule: dict[str, Any], project_root: Path | None = None, config: 
         if project_root is None:
             raise ValueError("Custom analysis rule needs a project root")
         function = load_function(rule["function"], project_root, config)
-        statement = str(function(rule)).strip()
-        if not statement:
-            raise ValueError("Custom analysis rule returned an empty statement")
+        statement = str(function(rule))
+        if (not statement.strip() or any(char in statement for char in ("\n", "\r", "\\", ";"))
+                or re.search(r"\b(?:include|ahdl_include)\b|\bsimulator\s+lang\b", statement, re.I)):
+            raise ValueError("Custom analysis rule must return a single-line analysis statement, not includes or language changes")
+        statement = statement.strip()
         return statement
     if kind not in {"dc", "ac", "tran", "stb"}:
         raise ValueError(f"Unsupported analysis kind: {kind}")
