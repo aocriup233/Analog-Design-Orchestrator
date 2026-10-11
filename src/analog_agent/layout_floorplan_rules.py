@@ -92,7 +92,7 @@ def validate_rules(document, *, leading=False):
             raise ValueError("Reversed floorplan target bounds")
     if "objective_weights" in document:
         weights = document["objective_weights"]
-        fields(weights, set(), {"area", "wirelength", "symmetry", "matching", "power"})
+        fields(weights, set(), {"area", "aspect_ratio", "wirelength", "symmetry", "matching", "power"})
         for key, value in weights.items():
             number(value, f"weight.{key}")
     # Validate without normalizing/reinterpreting user preferences.

@@ -15,6 +15,7 @@ from .layout_runs import clone_layout, layout_context, layout_path, lock_info, p
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
 from .layout_floorplan_plugin import floorplan_generate
 from .layout_floorplan_diff import floorplan_diff
+from .layout_floorplan_score import floorplan_score
 from .layout_constraints import constraints_draft, constraints_freeze
 from .layout_placement_check import floorplan_constraints_check, routing_review
 from .layout_routing import propose_routing
@@ -115,11 +116,13 @@ def main() -> int:
     layout_prepare.add_argument("schematic", type=Path)
     layout_prepare.add_argument("--allow-failing-design", action="store_true")
     layout_prepare.add_argument("--reason", default="")
-    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-generate", "floorplan-diff", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
+    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-generate", "floorplan-diff", "floorplan-score", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
         if name == "floorplan-generate":
             action.add_argument("--placement", type=Path, help="Optional private user-supplied placement for an echo generator")
+        if name == "floorplan-score":
+            action.add_argument("--source", choices=["candidate", "live"], default="candidate")
         if name in {"floorplan-freeze", "constraints-freeze"}:
             action.add_argument("--reason", required=True, help="Human review rationale")
         if name == "constraints-freeze":
@@ -240,6 +243,8 @@ def main() -> int:
             output = floorplan_generate(args.run, placement=args.placement)
         elif args.layout_command == "floorplan-diff":
             output = floorplan_diff(args.run)
+        elif args.layout_command == "floorplan-score":
+            output = floorplan_score(args.run, source=args.source)
         elif args.layout_command == "constraints":
             output = constraints_draft(args.run)
         elif args.layout_command == "constraints-freeze":

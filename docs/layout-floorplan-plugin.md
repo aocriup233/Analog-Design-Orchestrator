@@ -35,8 +35,8 @@ returns the original document unchanged, with no inferred foundry defaults.
 Each bbox has two ordered xy corners with strictly positive extents.
 `targets` is required and may contain `aspect_ratio` and/or `area_nm2`, each
 `{min,max}` with positive finite ordered bounds. Optional `objective_weights`
-maps any subset of area, wirelength, symmetry, matching, power to nonnegative
-finite numbers. No objective or optimization algorithm is implemented.
+maps any subset of area, aspect_ratio, wirelength, symmetry, matching, power to nonnegative
+finite numbers. The scorer below evaluates objectives; no optimization algorithm is implemented.
 
 These preferences are not DRC rules. Guard rings and pin preferences do not
 create geometry; bbox keep-outs do not certify foundry spacing. Only existing
@@ -115,3 +115,42 @@ Generation retains a hash-pinned full candidate so a failed freeze's live export
 does not erase the target. Older generations without that retained snapshot
 must be regenerated if their candidate export was overwritten. Diff is an
 advisory snapshot, not permission: freeze still performs its own live check.
+
+## Deterministic scoring
+
+`analog-agent layout floorplan-score RUN [--source candidate|live]` uses the same
+pure `score_floorplan` function for generated, manually exported and live
+placements. Default is candidate; live performs only a typed read. It returns
+JSON and input/netlist/rules/constraints hashes, without altering task state,
+proposal or review receipts. It requires frozen L2 constraints.
+
+Method `bbox-center-hpwl-v1` reports:
+
+- area_nm2: enclosing rectangle of instance/pin bboxes and pr_boundary vertices,
+  not summed device area or polygon-union area; empty/degenerate extent is null;
+- aspect_ratio: rectangle width/height;
+- HPWL: sum of each net's x span plus y span, using instance bbox centers and
+  matching named top-level pin bbox centers, from the pinned schematic netlist
+  through the existing conservative hierarchy/model mapper. Device terminals,
+  obstacles, vias and routed detours are NOT modeled;
+- symmetry/matching compliance: passed frozen constraints / checked constraints
+  using the existing L2 geometry checks; matching style none is not checked.
+  No applicable constraints gives fraction=null, not an invented PASS.
+
+Unknown models, skipped hierarchy/statements, absent placements, unmapped pins
+or missing connectivity are explicit. Nets with absent endpoints are excluded
+and listed, not shortened. Partial HPWL remains diagnostic; it cannot contribute
+to a weighted objective as though it were complete. This is never real routed
+wirelength, DRC/LVS, matching gradient, noise or electrical performance.
+
+`objective_weights` now yields a lower-is-better weighted_cost. Components are:
+area / configured area_nm2.max (or raw nm2 without a target); wirelength = HPWL
+in nm; symmetry/matching = one minus compliance (zero penalty if none checked).
+The added aspect_ratio weight uses max(r,1/r)-1 without a target, or
+max(min/r-1,r/max-1,0) with an aspect-ratio target. Component scales are fixed
+across candidates, not fitted to each candidate; choose weights with these units
+in mind. Power remains unavailable: positive power weight makes weighted_cost
+null. Other positive-weight unavailable components also make the cost null;
+no weights gives null. Target range violations are listed separately and do not
+authorize/reject a freeze; optimizers must compare feasibility before cost.
+The function is an evaluation building block, not a placement optimizer.
