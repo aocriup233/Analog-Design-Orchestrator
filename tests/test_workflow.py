@@ -5,12 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
+import subprocess
 
 from analog_agent.analysis_agent import analyze
 from analog_agent.core import create_run, read_json, write_json
 from analog_agent.netlist_agent import prepare
 from analog_agent.simulation_agent import simulate, stage
-from analog_agent.workflow import cleanup, decide_run, role_obligation
+from analog_agent.workflow import cleanup, decide_run, role_obligation, invoke_role
 from analog_agent.state import transition
 
 
@@ -34,6 +36,20 @@ class WorkflowTest(unittest.TestCase):
 
     def tearDown(self):
         self.temp.cleanup()
+
+    def test_role_timeout(self):
+        run = create_run(self.config, 0)
+        config = {"workflow": {"role_timeout_s": 0.01, "role_commands": {"netlist": ["trusted", "{run}"]}}}
+        with patch("analog_agent.workflow.run_config", return_value=config), \
+                patch("analog_agent.workflow.subprocess.run", side_effect=subprocess.TimeoutExpired("trusted", 0.01)) as process:
+            with self.assertRaises(subprocess.TimeoutExpired):
+                invoke_role("netlist", run)
+            self.assertEqual(process.call_args.kwargs["timeout"], 0.01)
+            self.assertEqual(process.call_args.args[0], ["trusted", str(run)])
+        for timeout in (0, -1, float("inf")):
+            with patch("analog_agent.workflow.run_config", return_value={"workflow": {"role_timeout_s": timeout}}):
+                with self.assertRaises(ValueError):
+                    invoke_role("netlist", run)
 
     def test_three_role_handoff_and_cleanup(self):
         run = create_run(self.config, 1)

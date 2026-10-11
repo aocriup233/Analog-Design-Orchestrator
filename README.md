@@ -2,6 +2,12 @@
 
 **An evidence-driven workflow for analog IC design, simulation, and analysis.**
 
+Role processes have a finite `workflow.role_timeout_s` timeout (default 3600 seconds).
+`workflow.role_commands` is a **trusted configuration-level execution hook**, not
+an untrusted proposal interface: its argument arrays can execute arbitrary programs.
+Only project owners should edit it. A timed-out submission must be reconciled,
+not blindly retried; terminating a worker does not cancel a scheduler job.
+
 [简体中文](README.zh-CN.md)
 
 ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory.
