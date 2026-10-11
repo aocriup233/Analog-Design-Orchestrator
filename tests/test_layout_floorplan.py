@@ -9,13 +9,13 @@ from analog_agent import cli
 from analog_agent.core import read_json, sha256, write_json
 from analog_agent.layout_bridge import adapter_read, read_placement
 from analog_agent.layout_floorplan import (floorplan_export, floorplan_freeze,
-    placement_sha256, require_unchanged_floorplan, validate_floorplan)
+    params_sha256, placement_sha256, require_unchanged_floorplan, validate_floorplan)
 from analog_agent.layout_runs import layout_context, prepare_layout
 from analog_agent.state import status, transition
 from test_layout_runs import LayoutRunsFixture
 
 
-class LayoutFloorplanTest(LayoutRunsFixture):
+class LayoutFloorplanFixture(LayoutRunsFixture):
     # Reuse fixture construction only, not the parent test methods.
     def setUp(self):
         super().setUp()
@@ -26,11 +26,12 @@ class LayoutFloorplanTest(LayoutRunsFixture):
         cfg["layout"]["bridge"] = {"reader": "private/layout/reader.py:read"}
         write_json(self.layout_config, cfg)
         self.run = prepare_layout(self.source)
-        self.floorplan = {"schema_version": 1, "source": "manual", "units": "um",
+        self.floorplan = {"schema_version": 2, "source": "manual", "units": "um", "pins": [], "labels": [], "pr_boundary": [],
             "cellview": {"library": "worklib", "cell": "top", "view": "layout", "path": "worklib/top/layout"},
             "export_timestamp": "2026-01-01T00:00:00+00:00", "instances": [
                 {"instance": "I0", "master": {"library": "generic", "cell": "device", "view": "layout"},
-                 "x": 0, "y": 0, "orientation": "R0", "bbox": [[0, 0], [1, 2]]}]}
+                 "x": 0, "y": 0, "orientation": "R0", "bbox": [[0, 0], [1, 2]],
+                 "params": {}, "params_sha256": params_sha256({})}]}
         self.reader = patch("analog_agent.layout_floorplan.layout_bridge.read_placement",
                             side_effect=lambda *args: copy.deepcopy(self.floorplan))
         self.mock_reader = self.reader.start()
@@ -47,6 +48,8 @@ class LayoutFloorplanTest(LayoutRunsFixture):
         floorplan_export(self.run)
         return floorplan_freeze(self.run, "reviewed manual fixture placement")
 
+
+class LayoutFloorplanTest(LayoutFloorplanFixture):
     def test_canonical_timestamp_order_and_float_hashing(self):
         cfg, _ = layout_context(self.run)
         original = validate_floorplan(self.floorplan, cfg)
@@ -72,9 +75,27 @@ class LayoutFloorplanTest(LayoutRunsFixture):
         self.assertEqual(status(self.run), "ROUTED")
         self.assertFalse((self.run / ".layout.lock").exists())
 
+    def test_check_while_holding_one_lock_and_clone_freeze(self):
+        from analog_agent.layout_runs import clone_layout, layout_lock
+        frozen = self.freeze()
+        with layout_lock(self.run) as session:
+            require_unchanged_floorplan(self.run, "routing", session=session)
+            with self.assertRaisesRegex(ValueError, "locked"):
+                require_unchanged_floorplan(self.run, "routing")
+        before = sha256(self.run / "task.json")
+        clone = clone_layout(self.run)
+        self.assertEqual(status(clone), "LAYOUT_PREPARED")
+        self.assertEqual(before, sha256(self.run / "task.json"))
+        ref = read_json(clone / "task.json")["inherited_floorplan_freeze"]
+        self.assertEqual(ref["sha256"], frozen["sha256"])
+        self.assertEqual(read_json(clone / ref["path"]), read_json(self.run / frozen["path"]))
+        write_json(self.run / frozen["path"], {})
+        with self.assertRaises(ValueError):
+            clone_layout(self.run)
+
     def test_moved_instance_invalidates_freeze_and_preserves_old_receipt(self):
         frozen = self.freeze()
-        self.floorplan["instances"][0]["x"] = 0.000000001
+        self.floorplan["instances"][0]["x"] = 0.001
         with self.assertRaisesRegex(ValueError, "FLOORPLAN_PENDING"):
             require_unchanged_floorplan(self.run, "routing")
         self.assertEqual(status(self.run), "FLOORPLAN_PENDING")
@@ -152,7 +173,7 @@ class LayoutFloorplanTest(LayoutRunsFixture):
             (self.run / "floorplan.json").symlink_to(outside)
         except OSError:
             self.skipTest("Symlinks unavailable on this host")
-        with self.assertRaisesRegex(ValueError, "escapes project"):
+        with self.assertRaisesRegex(ValueError, "redirected outside"):
             floorplan_export(self.run)
         self.assertEqual(outside.read_text(encoding="utf-8"), "protected")
         self.assertEqual(status(self.run), "NEEDS_ATTENTION")
@@ -169,7 +190,7 @@ class LayoutFloorplanTest(LayoutRunsFixture):
                 return outside
             return original(path, *args, **kwargs)
         with patch.object(Path, "resolve", resolved):
-            with self.assertRaisesRegex(ValueError, "escapes project"):
+            with self.assertRaisesRegex(ValueError, "redirected outside"):
                 floorplan_export(self.run)
         self.assertEqual(outside.read_text(encoding="utf-8"), "protected")
 
