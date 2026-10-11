@@ -141,6 +141,8 @@ def topology(text, detection=None):
     models.update(detection.get("models", {}))
     blocks, current, warnings = {"": {"ports": [], "devices": []}}, "", []
     globals_ = {"0"}
+    coverage = {"mapped_devices": 0, "unmapped_devices": 0, "skipped_hierarchy": 0,
+                "expanded_hierarchy": 0, "unsupported_statements": 0, "skipped_instances": 0}
     logical = text.replace("\\\n", " ")
     for lineno, line in enumerate(logical.splitlines(), 1):
         line = line.split("//", 1)[0].strip()
@@ -165,15 +167,17 @@ def topology(text, detection=None):
         if match:
             params = match[4].split()
             if any(not re.fullmatch(r"\w+=[^\s]+", p) for p in params):
+                coverage["skipped_instances"] += 1
                 warnings.append(f"Unsupported parameter syntax at line {lineno}; instance not inferred")
                 continue
             blocks[current]["devices"].append({"name": match[1], "nodes": match[2].split(),
                 "model": match[3], "params": dict(p.split("=", 1) for p in params)})
         elif not line.startswith(("simulator ", "parameters ", "global ")):
+            coverage["unsupported_statements"] += 1
             warnings.append(f"Unsupported statement at line {lineno}; not inferred")
     if current:
         raise ValueError("Unterminated subckt")
-    leaves = []
+    leaves, observed, nets = [], set(), set(globals_)
 
     def expand(block, prefix, mapping, stack):
         if block in stack or len(stack) >= 32:
@@ -185,27 +189,70 @@ def topology(text, detection=None):
             if name in seen:
                 raise ValueError("Duplicate netlist instance")
             seen.add(name)
+            observed.add(instance_identifier(name, allow_leading_digit=True))
             nodes = [n if n in globals_ else mapping.get(n, prefix + n) for n in device["nodes"]]
+            nets.update(nodes)
             if device["model"] in blocks:
                 sub = blocks[device["model"]]
                 if device["params"] or len(nodes) != len(sub["ports"]):
+                    coverage["skipped_hierarchy"] += 1
                     warnings.append(f"Parameterized or mismatched subckt {name}; not inferred")
                     continue
+                coverage["expanded_hierarchy"] += 1
                 expand(device["model"], name + "/", dict(zip(sub["ports"], nodes)), stack + [block])
             else:
                 definition = models.get(device["model"])
                 if definition is None:
+                    coverage["unmapped_devices"] += 1
                     warnings.append(f"Unmapped device {name}; not inferred")
                     continue
                 if len(nodes) != len(definition["terminals"]):
                     raise ValueError(f"Terminal count mismatch: {name}")
                 leaves.append({**device, "name": name, "kind": definition["kind"],
                                "terms": dict(zip(definition["terminals"], nodes))})
+                coverage["mapped_devices"] += 1
     top = detection.get("top", "")
     if top not in blocks:
         raise ValueError("Configured detection top not found")
     expand(top, "", {n: n for n in blocks[top]["ports"]}, [])
-    return {"devices": sorted(leaves, key=lambda d: d["name"]), "warnings": sorted(set(warnings))}
+    return {"devices": sorted(leaves, key=lambda d: d["name"]), "warnings": sorted(set(warnings)),
+            "observed_instances": sorted(observed), "nets": sorted(nets), "coverage": coverage}
+
+
+def validate_references(items, graph, detected_ids):
+    known = set(graph["observed_instances"])
+    known_nets = set()
+    for name in graph["nets"]:
+        try:
+            known_nets.add(instance_identifier(name, allow_leading_digit=True))
+        except ValueError:
+            pass  # Unsupported names cannot silently satisfy a schema reference.
+    errors = []
+    for item in items:
+        if item["id"].startswith("det_") and item["id"] not in detected_ids:
+            errors.append(f"{item['id']}: orphan detection ID")
+        names, allowed = [], known
+        if item["kind"] == "matching":
+            names = list(itertools.chain.from_iterable(item["groups"]))
+        elif item["kind"] == "symmetry":
+            names = list(itertools.chain.from_iterable(item["pairs"]))
+        elif item["kind"] == "symmetric_routing":
+            names, allowed = list(itertools.chain.from_iterable(item["pairs"])), known_nets
+        elif item["kind"] in {"net_class", "max_vias"}:
+            names, allowed = list(item["nets"]), known_nets
+            if item.get("shielding") is not None:
+                names.append(instance_identifier(item["shielding"], allow_leading_digit=True))
+        missing = sorted(set(names) - allowed)
+        if missing:
+            errors.append(f"{item['id']}: unresolved references {', '.join(missing)}")
+    if errors:
+        raise ValueError("Orphan constraint references: " + "; ".join(errors))
+
+
+def override_diff(before, after):
+    return {"id": after["id"], "before": before, "after": after,
+            "changes": [{"field": key, "before": before.get(key), "after": after.get(key)}
+                        for key in sorted(before.keys() | after.keys()) if before.get(key) != after.get(key)]}
 
 
 def detect_constraints(graph):
@@ -253,6 +300,9 @@ def _inputs(run):
     user = validate_constraints(user, leading=cfg.get("allow_leading_digit", False))
     memory.validate_config(project)
     snapshot = memory.retrieve(project)
+    detected = detect_constraints(graph)
+    detected_ids = {c["id"] for c in detected}
+    validate_references(user["constraints"], graph, detected_ids)
     memory_constraints, warnings = [], list(graph["warnings"])
     for entry in snapshot["entries"]:
         if entry["kind"] != "layout_constraints":
@@ -261,14 +311,22 @@ def _inputs(run):
             document = json.loads(entry["summary"])
             for item in document["constraints"]:
                 item["source"] = "memory:" + entry["id"]
-            memory_constraints.extend(validate_constraints(document, leading=cfg.get("allow_leading_digit", False))["constraints"])
-        except (ValueError, KeyError, TypeError):
-            warnings.append(f"Reviewed memory {entry['id']} has no valid structured constraint summary; not inferred")
-    merged = {c["id"]: c for c in detect_constraints(graph)}
+            adopted = validate_constraints(document, leading=cfg.get("allow_leading_digit", False))["constraints"]
+            validate_references(adopted, graph, detected_ids)
+            memory_constraints.extend(adopted)
+        except json.JSONDecodeError as exc:
+            warnings.append(f"Reviewed memory {entry['id']} not adopted: invalid JSON at line {exc.lineno}, column {exc.colno}: {exc.msg}")
+        except (ValueError, KeyError, TypeError, AttributeError) as exc:
+            warnings.append(f"Reviewed memory {entry['id']} not adopted: schema/reference error: {str(exc)[:300]}")
+    merged = {c["id"]: c for c in detected}
+    overrides = []
     for item in memory_constraints:
         merged[item["id"]] = item
     for item in user["constraints"]:
-        merged[item["id"]] = {**item, "source": "user"}
+        after = {**item, "source": "user"}
+        if item["id"] in merged:
+            overrides.append(override_diff(merged[item["id"]], after))
+        merged[item["id"]] = after
     body = validate_constraints({"schema_version": 1, "constraints": list(merged.values())}, leading=cfg.get("allow_leading_digit", False))
     provenance = {"layout_inputs_sha256": sha256(local_path(run, "layout_inputs.json")),
                   "netlist_sha256": link["netlist_sha256"], "hierarchy_sha256": digest(graph),
@@ -277,7 +335,8 @@ def _inputs(run):
     layout_context(run)
     if (path.read_bytes() if path.exists() else None) != user_raw or memory.retrieve(project) != snapshot:
         raise LayoutEvidenceError("Constraint inputs changed during retrieval")
-    return cfg, {**body, "inputs": provenance, "warnings": sorted(set(warnings))}
+    return cfg, {**body, "inputs": provenance, "warnings": sorted(set(warnings)),
+                 "coverage": graph["coverage"], "overrides": overrides}
 
 
 def constraints_draft(run: Path):

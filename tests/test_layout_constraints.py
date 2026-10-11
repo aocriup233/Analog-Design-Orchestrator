@@ -15,12 +15,19 @@ def matching(name="group", source="user"):
             "groups": [["I0", "I1"]], "style": "none", "topology": "user", "tolerance_nm": 0}
 
 
-class LayoutConstraintsTest(LayoutRunsFixture):
+class LayoutConstraintsFixture(LayoutRunsFixture):
     def setUp(self):
         super().setUp()
+        from analog_agent.core import create_run
+        from analog_agent.netlist_agent import prepare
+        (self.root / "template.scs").write_text("I0 (A B) resistor r=1k\nI1 (A C) resistor r=1k\n", encoding="utf-8")
+        self.source = create_run(self.config, 0)
+        self.net = prepare(self.source)
         self.verify_source()
         self.run = prepare_layout(self.source)
 
+
+class LayoutConstraintsTest(LayoutConstraintsFixture):
     def test_schema_all_kinds_and_rejections(self):
         entries = [matching(), {"id": "sym", "kind": "symmetry", "source": "user", "rationale": "axis",
             "pairs": [["I0", "I1"]], "axis": {"direction": "x", "coordinate_nm": -2}, "tolerance_nm": 1},
@@ -79,7 +86,7 @@ X0 (INP INN TAIL) stage
         self.assertEqual(first["sha256"], second["sha256"])
         bridge.assert_not_called()
         self.assertEqual(status(self.run), "CONSTRAINTS_DRAFTED")
-        item = read_json(self.run / first["path"])["constraints"][0]
+        item = next(c for c in read_json(self.run / first["path"])["constraints"] if c["id"] == "group")
         self.assertEqual(item["source"], "user")
         self.assertEqual(item["style"], "none")
 
@@ -97,7 +104,7 @@ X0 (INP INN TAIL) stage
         self.assertEqual([e["id"] for e in snapshot["entries"]], ["a"])
         with patch("analog_agent.layout_constraints.memory.retrieve", return_value=snapshot):
             result = constraints_draft(self.run)
-        self.assertEqual(read_json(self.run / result["path"])["constraints"][0]["source"], "memory:a")
+        self.assertEqual(next(c for c in read_json(self.run / result["path"])["constraints"] if c["id"] == "group")["source"], "memory:a")
 
     def test_human_freeze_gate_and_hash_link(self):
         from analog_agent.layout_runs import layout_lock

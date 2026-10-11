@@ -53,6 +53,23 @@ The draft records netlist, derived hierarchy, user-file, layout-input and memory
 selection/source hashes. Rule and private configuration contents are never
 copied into public repository files or prompts.
 
+Drafts include `coverage` counters (mapped/unmapped devices, expanded/skipped
+hierarchy, unsupported statements and skipped instances) and `overrides` with
+the complete before/after records and changed fields. Coverage is limited to
+the parsed/expanded subset; skipped hierarchy is not claimed to contain zero
+devices. Every rejected selected reviewed-memory summary produces a warning
+with its ID and JSON location/reason or schema/reference failure. Retrieval
+caps omit entire entries, not truncate their summaries; malformed or externally
+truncated JSON is never silently accepted or recovered.
+
+The `det_` ID prefix is reserved for current rule detections. User constraints
+using that prefix must target an extant detection; independent user IDs remain
+valid. All user instance/net/shield references must resolve in the observed
+linked-netlist hierarchy, including known unmapped instances; unexpanded or
+unsupported references fail closed. An orphan user reference blocks drafting,
+not a warning that can be waived. Memory reference failures instead identify
+the rejected entry in warnings. No absent device is silently removed from a group.
+
 ## Human review gate
 
 `analog-agent layout constraints RUN` publishes deterministic
