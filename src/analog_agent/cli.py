@@ -11,7 +11,7 @@ from . import campaign as campaign_flow
 from .core import create_run, load_config, read_json, run_config
 from .parameters import validate_values
 from . import memory as project_memory
-from .layout_runs import layout_context, layout_path, prepare_layout
+from .layout_runs import clone_layout, layout_context, layout_path, lock_info, prepare_layout
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
 from .netlist_agent import prepare
 from .replay import replay as replay_history
@@ -105,7 +105,9 @@ def main() -> int:
     layout_actions = layout.add_subparsers(dest="layout_command", required=True)
     layout_prepare = layout_actions.add_parser("prepare", help="Link a verified/analyzed schematic run")
     layout_prepare.add_argument("schematic", type=Path)
-    for name in ("status", "floorplan-export", "floorplan-freeze", "floorplan-check"):
+    layout_prepare.add_argument("--allow-failing-design", action="store_true")
+    layout_prepare.add_argument("--reason", default="")
+    for name in ("status", "lock-info", "clone", "floorplan-export", "floorplan-freeze", "floorplan-check"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
         if name == "floorplan-freeze":
@@ -207,7 +209,12 @@ def main() -> int:
             output = campaign_flow.propose(args.campaign)
     elif args.command == "layout":
         if args.layout_command == "prepare":
-            output = {"run": str(prepare_layout(args.schematic)), "status": "LAYOUT_PREPARED"}
+            output = {"run": str(prepare_layout(args.schematic, allow_failing_design=args.allow_failing_design,
+                                                reason=args.reason)), "status": "LAYOUT_PREPARED"}
+        elif args.layout_command == "lock-info":
+            output = lock_info(args.run)
+        elif args.layout_command == "clone":
+            output = {"run": str(clone_layout(args.run)), "status": "LAYOUT_PREPARED"}
         elif args.layout_command == "status":
             run = layout_path(args.run)
             layout_context(run)

@@ -129,23 +129,28 @@ def _attention(run: Path, exc: Exception) -> None:
 
 def floorplan_export(run: Path) -> dict:
     run = layout_path(run)
-    with layout_lock(run):
-        current = status(run)
-        if current not in EXPORT_STATES:
-            raise ValueError(f"Cannot export placement from {current}")
-        try:
-            cfg, _ = layout_context(run)
-            frozen = _frozen(run, cfg) if current in {"FLOORPLAN_FROZEN", "ROUTED", "DRC_DONE", "LVS_DONE", "LAYOUT_VERIFIED"} else None
-            floorplan = _capture(run, cfg)
-            receipt = _publish(run, floorplan)
-            changed = frozen is not None and receipt["placement_sha256"] != frozen["placement_sha256"]
-            if changed:
-                transition(run, "FLOORPLAN_PENDING", active_floorplan_freeze=None,
-                           message="Manual placement changed; routing/verification blocked until a new human freeze")
-            return {**receipt, "status": status(run), "changed": changed}
-        except Exception as exc:
-            _attention(run, exc)
-            raise
+    with layout_lock(run) as session:
+        return _floorplan_export_locked(run, session)
+
+
+def _floorplan_export_locked(run: Path, session) -> dict:
+    session.require(run)
+    current = status(run)
+    if current not in EXPORT_STATES:
+        raise ValueError(f"Cannot export placement from {current}")
+    try:
+        cfg, _ = layout_context(run)
+        frozen = _frozen(run, cfg) if current in {"FLOORPLAN_FROZEN", "ROUTED", "DRC_DONE", "LVS_DONE", "LAYOUT_VERIFIED"} else None
+        floorplan = _capture(run, cfg)
+        receipt = _publish(run, floorplan)
+        changed = frozen is not None and receipt["placement_sha256"] != frozen["placement_sha256"]
+        if changed:
+            transition(run, "FLOORPLAN_PENDING", active_floorplan_freeze=None,
+                       message="Manual placement changed; routing/verification blocked until a new human freeze")
+        return {**receipt, "status": status(run), "changed": changed}
+    except Exception as exc:
+        _attention(run, exc)
+        raise
 
 
 def floorplan_freeze(run: Path, reason: str) -> dict:
@@ -183,15 +188,19 @@ def floorplan_freeze(run: Path, reason: str) -> dict:
             raise
 
 
-def require_unchanged_floorplan(run: Path, checkpoint: str) -> dict:
+def require_unchanged_floorplan(run: Path, checkpoint: str, *, session=None) -> dict:
     """Mandatory future routing/verification preflight, not an execution command."""
     if checkpoint not in {"routing", "verification"}:
         raise ValueError("Floorplan checkpoint must be routing or verification")
     run = layout_path(run)
+    if session is None:
+        with layout_lock(run) as held:
+            return require_unchanged_floorplan(run, checkpoint, session=held)
+    session.require(run)
     allowed = {"FLOORPLAN_FROZEN"} if checkpoint == "routing" else {"ROUTED", "DRC_DONE", "LVS_DONE"}
     if status(run) not in allowed:
         raise ValueError(f"Invalid {checkpoint} floorplan checkpoint state")
-    result = floorplan_export(run)
+    result = _floorplan_export_locked(run, session)
     if result["changed"]:
         raise ValueError("Manual placement changed: FLOORPLAN_PENDING; review and freeze again before proceeding")
     if result["status"] not in allowed:

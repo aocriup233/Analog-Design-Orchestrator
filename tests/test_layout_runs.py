@@ -35,9 +35,63 @@ class LayoutRunsFixture(unittest.TestCase):
             transition(self.source, state)
         write_json(self.source / "simulation_result.json", {"status": "DONE", "errors": [],
                    "netlist_sha256": self.net["netlist_sha256"]})
+        write_json(self.source / "analysis_result.json", {"status": "PASS"})
 
 
 class LayoutRunsTest(LayoutRunsFixture):
+    def test_owner_record_and_session_lifetime(self):
+        from analog_agent.layout_runs import lock_info
+        import os
+        self.verify_source()
+        run = prepare_layout(self.source)
+        with layout_lock(run) as session:
+            session.require(run)
+            record = lock_info(run)
+            self.assertEqual(set(record["owner"]), {"pid", "host", "argv", "started_at"})
+            self.assertEqual(record["owner"]["pid"], os.getpid())
+        with self.assertRaises(ValueError):
+            session.require(run)
+        self.assertFalse(lock_info(run)["locked"])
+
+    def test_spec_gate_and_fail_override(self):
+        self.verify_source()
+        write_json(self.source / "analysis_result.json", {"status": "FAIL"})
+        with self.assertRaisesRegex(ValueError, "PASS"):
+            prepare_layout(self.source)
+        with self.assertRaises(ValueError):
+            prepare_layout(self.source, allow_failing_design=True, reason="exploration")
+        transition(self.source, "ANALYZED")
+        with self.assertRaises(ValueError):
+            prepare_layout(self.source, allow_failing_design=True)
+        run = prepare_layout(self.source, allow_failing_design=True, reason="reviewed failing design")
+        self.assertEqual(read_json(run / "layout_inputs.json")["spec_gate"]["reason"], "reviewed failing design")
+        layout_context(run)
+
+    def test_atomic_failure_and_tmp_rejection(self):
+        from unittest.mock import patch
+        from analog_agent.layout_runs import layout_path
+        self.verify_source()
+        with patch("analog_agent.layout_runs.write_json", side_effect=OSError("injected failure")):
+            with self.assertRaises(OSError):
+                prepare_layout(self.source)
+        self.assertEqual(list((self.root / "layouts").iterdir()), [])
+        temporary = self.root / "layouts/.tmp-fixture"
+        temporary.mkdir()
+        with self.assertRaises(ValueError):
+            layout_path(temporary)
+
+    def test_clone_revalidates_and_does_not_change_source(self):
+        from analog_agent.layout_runs import clone_layout
+        self.verify_source()
+        run = prepare_layout(self.source)
+        hashes = {p.name: sha256(p) for p in run.iterdir()}
+        clone = clone_layout(run)
+        self.assertEqual(read_json(run / "layout_inputs.json"), read_json(clone / "layout_inputs.json"))
+        self.assertEqual(read_json(clone / "task.json")["cloned_from"]["run_id"], run.name)
+        self.assertEqual(hashes, {p.name: sha256(p) for p in run.iterdir()})
+        Path(self.net["netlist"]).write_text("tampered", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            clone_layout(run)
     def test_linked_run_is_separate_and_does_not_mutate_schematic(self):
         with self.assertRaisesRegex(ValueError, "VERIFIED"):
             prepare_layout(self.source)

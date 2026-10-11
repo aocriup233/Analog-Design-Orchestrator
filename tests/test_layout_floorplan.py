@@ -72,6 +72,23 @@ class LayoutFloorplanTest(LayoutRunsFixture):
         self.assertEqual(status(self.run), "ROUTED")
         self.assertFalse((self.run / ".layout.lock").exists())
 
+    def test_check_while_holding_one_lock_and_clone_freeze(self):
+        from analog_agent.layout_runs import clone_layout, layout_lock
+        frozen = self.freeze()
+        with layout_lock(self.run) as session:
+            require_unchanged_floorplan(self.run, "routing", session=session)
+            with self.assertRaisesRegex(ValueError, "locked"):
+                require_unchanged_floorplan(self.run, "routing")
+        before = sha256(self.run / "task.json")
+        clone = clone_layout(self.run)
+        self.assertEqual(status(clone), "LAYOUT_PREPARED")
+        self.assertEqual(before, sha256(self.run / "task.json"))
+        ref = read_json(clone / "task.json")["inherited_floorplan_freeze"]
+        self.assertEqual(read_json(clone / ref["path"]), read_json(self.run / frozen["path"]))
+        write_json(self.run / frozen["path"], {})
+        with self.assertRaises(ValueError):
+            clone_layout(self.run)
+
     def test_moved_instance_invalidates_freeze_and_preserves_old_receipt(self):
         frozen = self.freeze()
         self.floorplan["instances"][0]["x"] = 0.000000001

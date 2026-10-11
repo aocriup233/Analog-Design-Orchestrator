@@ -22,6 +22,15 @@ project's** `private/layout/`, not the ADO checkout. Replace all placeholders.
 | `drc.run_dir`, `lvs.run_dir` | Same external directory policy; L1 does not create/write in them |
 | `drc.runset`, `lvs.runset` | Optional existing readable absolute files outside the project and ADO checkout |
 | `bridge.reader` | Trusted function reference, loaded only through `plugins.load_function` |
+| `allow_leading_digit` | Boolean, default false; permits a digit at the start of library/cell/instance/master names, never other executable characters |
+
+Every run directory must be writable and disjoint from **both** rule directories:
+equal, inside or containing relationships (including cross-stage relationships)
+are rejected after resolution. L3 must create `<run_dir>/<layout_run_id>/` with
+`exist_ok=False`, write only in that exclusive directory, and delete only that
+exact directory. Never write/delete in a rule directory or shared run root.
+Rule/runset/plugin hashes are streamed in 1 MiB chunks. Rejected identifiers are
+reported together, listing every offending name rather than stopping at the first.
 
 Paths are validated on the worker's host, not guessed to exist on a remote host.
 Execute in the path environment where the configured rule directories exist.
@@ -41,6 +50,8 @@ There are no verification handoffs yet because L1 executes no verification.
 ```sh
 analog-agent layout prepare SCHEMATIC_RUN_DIR
 analog-agent layout status LAYOUT_RUN_DIR
+analog-agent layout lock-info LAYOUT_RUN_DIR
+analog-agent layout clone LAYOUT_RUN_DIR
 analog-agent layout floorplan-export LAYOUT_RUN_DIR
 # After L2 has frozen constraints and reached FLOORPLAN_PENDING:
 analog-agent layout floorplan-freeze LAYOUT_RUN_DIR --reason "reviewed placement"
@@ -50,6 +61,15 @@ Layout runs live in `<project>/layouts/<id>/`, separately from schematic `runs/`
 Ignore `layouts/` in independent project Git repositories. Preparation requires
 a VERIFIED or ANALYZED schematic run and a matching READY netlist/DONE simulation
 receipt with no errors. It never changes the schematic's files or status.
+An analysis verdict PASS is mandatory. Only an ANALYZED FAIL design can be
+explicitly admitted with `--allow-failing-design --reason TEXT`; the verdict,
+analysis byte hash and override reason are pinned in `layout_inputs.json`.
+Preparation builds `layouts/.tmp-<uuid>/`, fsyncs and atomically renames it to
+`layouts/<uuid>/`; failed preparations remove only their owned temporary tree.
+Temporary names are never valid runs. Clone revalidates the original inputs,
+copies a hash-checked active freeze as **inherited evidence**, records cloned_from
+and starts LAYOUT_PREPARED: it does not inherit routing/verification or bypass L2
+gates. The original run is never changed; locked/changed sources are refused.
 `layout_inputs.json` records schematic run ID, netlist SHA-256, netlist/simulation
 receipt hashes, saved public config hash, private layout config byte hash, and
 project-local reader file hash. The task pins this input handoff hash. Each
@@ -77,6 +97,12 @@ until L2 provides the constraints human gate. Fake tests advance fixture states
 explicitly; production CLI does not bypass missing stages.
 
 Mutating layout commands use an exclusive run lock. A stale `.layout.lock` is
+JSON with `pid`, `host`, `argv`, `started_at`; `layout lock-info` only reads it,
+even when private inputs have changed. `layout_lock` yields a scoped
+LayoutSession capability, invalid after exit. Internal lock-held operations
+accept that session instead of re-acquiring the lock; no global re-entrant lock.
+The argv owner record is local evidence, not a prompt or public config snapshot;
+credentials must never be supplied in command arguments.
 never silently reclaimed: inspect the owning process and reconcile any Bridge
 operation before removing that exact lock. Evidence/config/schema/reader errors
 enter NEEDS_ATTENTION with sanitized diagnostics; invalid command ordering is
