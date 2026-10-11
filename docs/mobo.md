@@ -144,6 +144,12 @@ This mode has no pending-point repulsion; numerical deduplication and the scored
 Sobol fallback still prevent duplicate evaluations. Cold starts remain Sobol.
 Points exactly on the default reference thresholds contribute zero hypervolume.
 
+Numeric history outside tightened bounds is excluded from models and current
+hypervolume, with comparison/point identity, parameters and reason recorded in
+`meta.excluded_history`. `history_count` and the point budget still include it.
+Malformed values, unknown parameters and incompatible enum/schema changes remain
+errors; this is not permission to mix different circuit or metric semantics.
+
 Fixed `bo.seed` (default 0), CPU double precision, one Torch thread and deterministic
 Torch operations provide repeatable proposal JSON bytes for identical input
 artifacts, paths, dependency versions and hardware. RNG states/thread settings

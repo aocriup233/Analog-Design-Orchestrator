@@ -153,6 +153,21 @@ assert not any(name in sys.modules for name in ('torch','gpytorch','botorch','sc
         self.assertEqual(read_json(actual / "campaign.json")["cycles"], [])
         self.assertFalse((self.root / "runs").exists())
 
+    @unittest.skipUnless(SCIPY_AVAILABLE, "optional scipy")
+    def test_tightened_bounds_exclude_history_not_budget(self):
+        self.comparison([(.1, .1), (.9, .2)])
+        self.cfg["parameters"]["x"]["max"] = .5
+        self.save()
+        result = propose(self.context)
+        self.assertEqual(result["meta"]["data_count"], 1)
+        self.assertEqual(result["meta"]["history_count"], 2)
+        self.assertEqual(result["meta"]["excluded_history"][0]["fields"], ["x"])
+        self.assertEqual(result["points"][0]["id"], "bo-000003")
+        self.assertTrue(all(float(p["parameters"]["x"]) <= .5 for p in result["points"]))
+        self.validate(result, 2)
+        with self.assertRaisesRegex(ValueError, "remaining"):
+            propose({**self.context, "policy": {"max_total_points": 2}})
+
     @unittest.skipUnless(BO_AVAILABLE, "optional BO stack")
     def test_warm_determinism_and_infeasible_classifier(self):
         rows = self.comparison([(0.1, .1), (.3, .15), (.5, .05), (.7, .2), (.9, .8)])

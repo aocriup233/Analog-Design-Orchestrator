@@ -123,7 +123,7 @@ def hypervolume(points: list[list[float]], reference: list[float]) -> float:
 
 
 def _history(campaign: Path, space: Space, required: list[str], rules: dict):
-    rows, cycles, hashes = [], [], {}
+    rows, cycles, hashes, excluded = [], [], {}, []
     for file in sorted(campaign.glob("cycle-*_comparison.json")):
         if not re.fullmatch(r"cycle-\d{4,}_comparison\.json", file.name):
             continue
@@ -131,8 +131,23 @@ def _history(campaign: Path, space: Space, required: list[str], rules: dict):
         hashes[file.name] = hashlib.sha256(content).hexdigest()
         comparison = json.loads(content)
         batch = []
-        for point in comparison.get("points", []):
-            parameters = space.values(point["parameters"])
+        for index, point in enumerate(comparison.get("points", [])):
+            # Validate syntax/types independently of current numeric bounds.
+            # Only bound changes are tolerated, not malformed historical values.
+            relaxed = {name: {key: value for key, value in schema.items() if key not in {"min", "max"}}
+                       for name, schema in space.definitions.items()}
+            raw = point["parameters"]
+            parameters = validate_values({name: raw.get(name, schema.get("initial"))
+                                         for name, schema in space.definitions.items()}, relaxed)
+            if raw.keys() - space.definitions.keys():
+                raise ValueError("Unknown historical parameters")
+            outside = [name for name, _, choices, lower, upper in space.fields
+                       if choices is None and not lower <= number_value(parameters[name]) <= upper]
+            if outside:
+                excluded.append({"comparison": file.name, "point_index": index,
+                                 "point_id": point.get("id"), "parameters": parameters,
+                                 "reason": "outside current numeric bounds", "fields": outside})
+                continue
             x = space.encode(parameters)
             metrics = {}
             measurements = point.get("metrics")
@@ -161,7 +176,7 @@ def _history(campaign: Path, space: Space, required: list[str], rules: dict):
             rows.append(row)
             batch.append(row)
         cycles.append(batch)
-    return rows, cycles, hashes
+    return rows, cycles, hashes, excluded
 
 
 def _reference(names, directions, rules, bo):
@@ -230,11 +245,11 @@ def propose(context: dict) -> dict:
     required = list(dict.fromkeys([*names, *rules]))
     space = Space(cfg.get("parameters", {}))
     fixed = space.fixed_features(_positive(bo.get("max_enum_combinations", 128), "bo.max_enum_combinations"))
-    rows, cycles, hashes = _history(campaign, space, required, rules)
+    rows, cycles, hashes, excluded = _history(campaign, space, required, rules)
     manifest_path = campaign / "campaign.json"
     manifest = read_json(manifest_path) if manifest_path.is_file() else None
     policy = context.get("policy", {})
-    used = sum(len(cycle["points"]) for cycle in manifest["cycles"]) if manifest else len(rows)
+    used = sum(len(cycle["points"]) for cycle in manifest["cycles"]) if manifest else len(rows) + len(excluded)
     remaining = _positive(policy.get("max_total_points", settings.get("max_total_points", 200)), "max_total_points") - used
     if remaining <= 0:
         raise ValueError("Campaign has no remaining point budget")
@@ -268,6 +283,7 @@ def propose(context: dict) -> dict:
         if key not in seen and key not in {space.key(point) for point in seed_points}:
             seed_points.append(values)
     meta = {"seed": seed, "library_versions": _versions(), "data_count": len(rows),
+            "history_count": len(rows) + len(excluded), "excluded_history": excluded,
             "valid_count": sum(row["valid"] for row in rows),
             "infeasible_count": sum(not row["feasible"] for row in rows),
             "hard_failure_count": sum(not row["hard_valid"] for row in rows),
