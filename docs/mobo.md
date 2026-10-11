@@ -136,6 +136,14 @@ Reaching point/cycle limits is an error. Stop suggestions never change this rule
 
 ## Determinism, metadata and tuning
 
+When warm-start history has no feasible point, acquisition explicitly maximizes
+probability of feasibility: Gaussian rule-interval probabilities multiplied by
+the hard-failure classifier probability (an independence approximation).
+It returns to constrained hypervolume acquisition once a feasible point exists.
+This mode has no pending-point repulsion; numerical deduplication and the scored
+Sobol fallback still prevent duplicate evaluations. Cold starts remain Sobol.
+Points exactly on the default reference thresholds contribute zero hypervolume.
+
 Fixed `bo.seed` (default 0), CPU double precision, one Torch thread and deterministic
 Torch operations provide repeatable proposal JSON bytes for identical input
 artifacts, paths, dependency versions and hardware. RNG states/thread settings

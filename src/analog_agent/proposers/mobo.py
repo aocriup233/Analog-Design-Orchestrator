@@ -381,7 +381,8 @@ def _bayesian(space, rows, names, signs, rules, reference, bo, seed, q, fixed, s
             sampler = SobolQMCNormalSampler(torch.Size([_positive(bo.get("mc_samples", 64), "bo.mc_samples")]), seed=seed)
             objective = GenericMCMultiOutputObjective(lambda samples, X=None: samples[..., :len(names)] * tensor(signs))
             baseline = tensor([row["x"] for row in rows if row["feasible"]]).reshape(-1, space.width)
-            base = Acquisition(model=model, ref_point=reference, X_baseline=baseline,
+            feasibility_first = baseline.shape[0] == 0
+            base = None if feasibility_first else Acquisition(model=model, ref_point=reference, X_baseline=baseline,
                                sampler=sampler, objective=objective, constraints=constraints or None,
                                prune_baseline=False, cache_root=False)
 
@@ -390,6 +391,20 @@ def _bayesian(space, rows, names, signs, rules, reference, bo, seed, q, fixed, s
                     super().__init__(model=model)
                     self.base = base
                 def forward(self, X):
+                    if feasibility_first:
+                        posterior = model.posterior(X)
+                        mean = posterior.mean
+                        std = posterior.variance.clamp_min(1e-18).sqrt()
+                        normal = torch.distributions.Normal(tensor(0.0), tensor(1.0))
+                        probability = torch.ones_like(mean[..., 0])
+                        for name, rule in rules.items():
+                            column = metric_names.index(name)
+                            upper = normal.cdf((float(rule["max"]) - mean[..., column]) / std[..., column]) if "max" in rule else 1.0
+                            lower = normal.cdf((float(rule["min"]) - mean[..., column]) / std[..., column]) if "min" in rule else 0.0
+                            probability = probability * (upper - lower).clamp(0, 1)
+                        if classifier is not None:
+                            probability = probability * classifier.likelihood(classifier.model(X)).mean
+                        return probability.prod(dim=-1)
                     value = self.base(X)
                     if classifier is not None:
                         probability = classifier.likelihood(classifier.model(X)).mean.clamp(1e-9, 1 - 1e-9)
@@ -398,7 +413,8 @@ def _bayesian(space, rows, names, signs, rules, reference, bo, seed, q, fixed, s
                     return value
                 def set_X_pending(self, X_pending=None):
                     super().set_X_pending(X_pending)
-                    self.base.set_X_pending(X_pending)
+                    if self.base is not None:
+                        self.base.set_X_pending(X_pending)
 
             acquisition = FailureWeighted()
             bounds = torch.stack([torch.zeros(space.width, dtype=torch.double), torch.ones(space.width, dtype=torch.double)])
@@ -442,8 +458,9 @@ def _bayesian(space, rows, names, signs, rules, reference, bo, seed, q, fixed, s
                 candidates.append(parameters)
                 encoded.append(space.encode(parameters))
                 details.append(([(float(mean[i]), float(std[i])) for i in range(len(names))], probability, value,
+                                "GP posterior; feasibility-first acquisition" if feasibility_first else
                                 "GP posterior; log acquisition" if logarithmic else "GP posterior; acquisition"))
-            return candidates, details, {"acquisition": "qLogNEHVI" if logarithmic else "qNEHVI",
+            return candidates, details, {"acquisition": "probability_of_feasibility" if feasibility_first else "qLogNEHVI" if logarithmic else "qNEHVI",
                                          "gp_metric_names": metric_names,
                                          "gp_observation_counts": {name: sum(name in row["metrics"] for row in rows) for name in metric_names},
                                          "classifier_observation_count": len(rows) if classifier is not None else 0}

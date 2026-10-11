@@ -174,6 +174,9 @@ assert not any(name in sys.modules for name in ('torch','gpytorch','botorch','sc
         self.save()
         result = propose(self.context)
         self.assertEqual(result["meta"]["current_hypervolume"], 0)
+        self.assertEqual(result["meta"]["acquisition"], "probability_of_feasibility")
+        self.assertLess(float(result["points"][0]["parameters"]["x"]), .9)
+        self.assertEqual(result, propose(self.context))
         self.validate(result, 3)
 
     @unittest.skipUnless(BO_AVAILABLE, "optional BO stack")
