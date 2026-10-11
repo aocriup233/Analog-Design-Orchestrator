@@ -14,10 +14,30 @@ from .parameters import number_value, validate_value
 CONFIG_PATH = "private/layout/config.json"
 
 
-def identifier(value, label: str) -> str:
-    if not isinstance(value, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_-]*", value):
-        raise ValueError(f"{label} must be a simple identifier")
+def identifier(value, label: str, *, allow_leading_digit: bool = False) -> str:
+    initial = r"[A-Za-z0-9_]" if allow_leading_digit else r"[A-Za-z_]"
+    if not isinstance(value, str) or not re.fullmatch(initial + r"[A-Za-z0-9_-]*", value):
+        raise ValueError(f"Invalid {label}: {value!r}")
     return validate_value(label, value)
+
+
+def validate_identifiers(items, *, allow_leading_digit=False) -> None:
+    errors = []
+    for label, value in items:
+        try:
+            identifier(value, label, allow_leading_digit=allow_leading_digit)
+        except ValueError:
+            errors.append(f"{label}={value!r}")
+    if errors:
+        raise ValueError("Offending names: " + ", ".join(errors))
+
+
+def stream_sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def external_path(root: Path, value, *, directory: bool) -> Path:
@@ -57,23 +77,34 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     if not isinstance(document, dict) or set(document) != {"layout"}:
         raise ValueError("Private layout config must contain only a layout object")
     cfg = document["layout"]
-    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit"}:
         raise ValueError("Unknown layout configuration fields")
     if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
-    for name in ("library", "cell"):
-        identifier(cfg.get(name), f"layout.{name}")
+    leading = cfg.get("allow_leading_digit", False)
+    if type(leading) is not bool:
+        raise ValueError("layout.allow_leading_digit must be boolean")
+    validate_identifiers([(f"layout.{name}", cfg.get(name)) for name in ("library", "cell")],
+                         allow_leading_digit=leading)
     timeout = number_value(validate_value("layout.timeout_s", cfg.get("timeout_s", 300), {"type": "number"}))
     if timeout <= 0:
         raise ValueError("layout.timeout_s must be positive")
+    directories = {}
     for stage in ("drc", "lvs"):
         section = cfg.get(stage)
         if not isinstance(section, dict) or set(section) - {"rule_dir", "run_dir", "runset"}:
             raise ValueError(f"layout.{stage} requires rule_dir and run_dir")
         for key in ("rule_dir", "run_dir"):
-            external_path(root, section.get(key), directory=True)
+            directories[stage, key] = external_path(root, section.get(key), directory=True)
+        if not os.access(directories[stage, "run_dir"], os.W_OK):
+            raise ValueError(f"layout.{stage}.run_dir must be writable")
         if "runset" in section:
             external_path(root, section["runset"], directory=False)
+    for run_stage in ("drc", "lvs"):
+        for rule_stage in ("drc", "lvs"):
+            work, rules = directories[run_stage, "run_dir"], directories[rule_stage, "rule_dir"]
+            if work.is_relative_to(rules) or rules.is_relative_to(work):
+                raise ValueError(f"layout.{run_stage}.run_dir overlaps layout.{rule_stage}.rule_dir")
     bridge = cfg.get("bridge", {})
     if not isinstance(bridge, dict) or set(bridge) - {"reader"}:
         raise ValueError("layout.bridge permits only reader")
@@ -85,7 +116,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
         location, _ = reader.rsplit(":", 1)
         if location.endswith(".py"):
             plugin = local_path(root, location)
-            manifest[plugin.relative_to(root).as_posix()] = hashlib.sha256(plugin.read_bytes()).hexdigest()
+            manifest[plugin.relative_to(root).as_posix()] = stream_sha256(plugin)
         # Module allowlisting is enforced by plugins.load_function at execution.
     return cfg, manifest
 
@@ -106,7 +137,7 @@ def verification_inputs(root: Path, cfg: dict, stage: str, used_files: list[str]
         path = external_path(root, value, directory=False)
         if not path.is_relative_to(rule_dir) and path != runset:
             raise ValueError("Used verification input is outside the configured rule directory/runset")
-        hashes[str(path)] = hashlib.sha256(path.read_bytes()).hexdigest()
+        hashes[str(path)] = stream_sha256(path)
     if runset is not None and str(runset) not in hashes:
         raise ValueError("Configured runset must be included in used verification inputs")
     return {"stage": stage, "tool": cfg["tool"], "rule_sha256": hashes}

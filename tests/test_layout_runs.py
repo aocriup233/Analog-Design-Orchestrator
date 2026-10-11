@@ -22,7 +22,9 @@ class LayoutRunsFixture(unittest.TestCase):
         write_json(self.config, {"template": "template.scs", "parameters": {},
                    "metrics": {"x": {"kind": "scalar", "key": "x"}}, "rules": {"x": {"min": 0}}})
         self.layout_config = self.root / "private/layout/config.json"
-        section = {"rule_dir": str(external), "run_dir": str(external)}
+        work = self.base / "work"
+        work.mkdir()
+        section = {"rule_dir": str(external), "run_dir": str(work)}
         write_json(self.layout_config, {"layout": {"tool": "calibre", "library": "worklib",
                    "cell": "top", "drc": section, "lvs": section}})
         self.source = create_run(self.config, 0)

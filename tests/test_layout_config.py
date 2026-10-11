@@ -83,3 +83,47 @@ class LayoutConfigTest(unittest.TestCase):
         self.save()
         with self.assertRaises(ValueError):
             load_layout_config(self.root)
+
+    def test_overlap_equal_inside_containing_and_cross_stage(self):
+        child = self.rules / "child"
+        child.mkdir()
+        for stage in ("drc", "lvs"):
+            for work in (self.rules, child, self.base):
+                with self.subTest(stage=stage, work=work):
+                    self.cfg[stage]["run_dir"] = str(work)
+                    self.save()
+                    with self.assertRaisesRegex(ValueError, "overlaps"):
+                        load_layout_config(self.root)
+                self.cfg[stage]["run_dir"] = str(self.work)
+        # DRC work only overlaps the LVS rules (and vice versa).
+        for run_stage, rule_stage in (("drc", "lvs"), ("lvs", "drc")):
+            old = self.cfg[rule_stage]["rule_dir"]
+            self.cfg[rule_stage]["rule_dir"] = str(self.work)
+            self.save()
+            with self.assertRaisesRegex(ValueError, "overlaps"):
+                load_layout_config(self.root)
+            self.cfg[rule_stage]["rule_dir"] = old
+
+    def test_writable_and_all_offending_names(self):
+        import os
+        self.save()
+        with patch("analog_agent.layout_config.os.access", side_effect=lambda path, mode: mode != os.W_OK):
+            with self.assertRaisesRegex(ValueError, "writable"):
+                load_layout_config(self.root)
+        self.cfg.update(library="1lib", cell="2cell")
+        self.save()
+        with self.assertRaises(ValueError) as raised:
+            load_layout_config(self.root)
+        self.assertIn("1lib", str(raised.exception))
+        self.assertIn("2cell", str(raised.exception))
+        self.cfg["allow_leading_digit"] = True
+        self.save()
+        load_layout_config(self.root)
+
+    def test_large_files_streamed_in_one_mib_chunks(self):
+        from analog_agent.layout_config import stream_sha256
+        path = self.rules / "large.rule"
+        path.write_bytes(b"fixture" * 400000)
+        expected = sha256(path)
+        with patch.object(Path, "read_bytes", side_effect=AssertionError("must stream")):
+            self.assertEqual(stream_sha256(path), expected)

@@ -4,6 +4,7 @@
     "library": "USER_LIBRARY",
     "cell": "USER_CELL",
     "timeout_s": 300,
+    "allow_leading_digit": false,
     "drc": {"rule_dir": "REPLACE_WITH_ABSOLUTE_EXTERNAL_RULE_DIRECTORY", "run_dir": "REPLACE_WITH_ABSOLUTE_EXTERNAL_RUN_DIRECTORY"},
     "lvs": {"rule_dir": "REPLACE_WITH_ABSOLUTE_EXTERNAL_RULE_DIRECTORY", "run_dir": "REPLACE_WITH_ABSOLUTE_EXTERNAL_RUN_DIRECTORY"},
     "bridge": {"reader": "private/layout/read_placement.py:read_placement"}
