@@ -19,6 +19,7 @@ class LayoutWorkerFixture(LayoutFloorplanFixture):
         config = read_json(self.layout_config)
         config["layout"]["bridge"]["operations"] = "private/layout/operations.py:dispatch"
         config["layout"]["verification_adapter"] = "private/layout/operations.py:dispatch"
+        config["layout"]["verification_success_markers"] = {"drc": ["FIXTURE DRC COMPLETED"], "lvs": ["FIXTURE LVS COMPLETED"]}
         config["layout"]["lvs_source"] = {"generator": "private/layout/operations.py:dispatch",
               "normalizer": "private/layout/operations.py:dispatch", "top": "top", "dependencies": []}
         config["layout"]["tech_summary"] = {"layers": {"metal": {"min_width_nm": 10, "min_spacing_nm": 5}}, "vias": {}}

@@ -77,7 +77,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     if not isinstance(document, dict) or set(document) != {"layout"}:
         raise ValueError("Private layout config must contain only a layout object")
     cfg = document["layout"]
-    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection", "tech_summary", "verification_adapter", "max_fix_iterations", "lvs_source"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection", "tech_summary", "verification_adapter", "max_fix_iterations", "lvs_source", "verification_success_markers"}:
         raise ValueError("Unknown layout configuration fields")
     if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
@@ -140,6 +140,11 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
         from .layout_routing import validate_tech
         validate_tech(cfg["tech_summary"])
     manifest = {CONFIG_PATH: hashlib.sha256(data).hexdigest()}
+    markers = cfg.get("verification_success_markers", {})
+    if (not isinstance(markers, dict) or set(markers) - {"drc", "lvs"}
+            or any(not isinstance(values, list) or not values or not all(isinstance(v, str) and v.strip() and "\n" not in v and "\r" not in v for v in values)
+                   for values in markers.values())):
+        raise ValueError("verification_success_markers requires nonempty lists of exact native success lines")
     source = cfg.get("lvs_source", {})
     if source:
         if not isinstance(source, dict) or set(source) != {"generator", "normalizer", "top", "dependencies"}:

@@ -11,12 +11,28 @@ from test_layout_worker import LayoutWorkerFixture
 
 
 class VerificationParserTest(__import__("unittest").TestCase):
+    def test_conservative_clean(self):
+        document = read_json(Path(__file__).parent / "fixtures/layout_lvs_normalized.json")
+        for key in ("extraction_errors", "soft_connection_errors", "property_mismatches", "unknown_lines", "truncated"):
+            changed = copy.deepcopy(document)
+            changed["diagnostics"][key] = True if key == "truncated" else 1
+            self.assertFalse(parse_report(json.dumps(changed).encode(), stage="lvs", tool="pegasus")["clean"])
+        for field in ("completed", "success_marker"):
+            changed = copy.deepcopy(document)
+            if field == "completed":
+                changed[field] = False
+            else:
+                changed[field]["found"] = False
+            self.assertEqual(parse_report(json.dumps(changed).encode(), stage="lvs", tool="pegasus")["verdict"], "UNCERTAIN")
+        document["schema_version"] = 1
+        with self.assertRaises(ValueError):
+            parse_report(json.dumps(document).encode(), stage="lvs", tool="pegasus")
     def test_fixture_reports_and_truncated_counts(self):
         root = Path(__file__).parent / "fixtures"
         self.assertFalse(parse_report((root / "layout_drc_normalized.json").read_bytes(), stage="drc", tool="calibre")["clean"])
         self.assertTrue(parse_report((root / "layout_lvs_normalized.json").read_bytes(), stage="lvs", tool="pegasus")["clean"])
         document = read_json(root / "layout_drc_normalized.json")
-        for key, value in (("completed", False), ("violations", []), ("counts_by_rule", {"spacing": -1}), ("lvs_match", True)):
+        for key, value in (("violations", []), ("counts_by_rule", {"spacing": -1}), ("lvs_match", True)):
             with self.assertRaises(ValueError):
                 parse_report(json.dumps({**document, key: value}).encode(), stage="drc", tool="calibre")
 
@@ -48,20 +64,35 @@ class VerificationFixture(LayoutWorkerFixture):
                 return {"used_files": [str(self.rule)], "version": "fixture-1"}
             stage = payload["stage"]
             clean = self.stage_clean[stage]
-            document = {"schema_version": 1, "tool": "calibre", "stage": stage, "completed": True,
+            document = {"schema_version": 2, "tool": "calibre", "stage": stage, "completed": True,
                         "counts_by_rule": {} if clean else {"spacing": 1},
                         "violations": [] if clean else [{"id": "v1", "rule": "spacing", "layer": "metal", "bbox": [[0, 0], [10, 10]], "message": "fixture", "nets": ["0"]}],
-                        "lvs_match": None if stage == "drc" else clean}
+                        "lvs_match": None if stage == "drc" else clean,
+                        "success_marker": {"found": True, "report": "native.txt", "line": 1, "text": f"FIXTURE {stage.upper()} COMPLETED"},
+                        "diagnostics": {"extraction_errors": 0, "soft_connection_errors": 0, "property_mismatches": 0, "unknown_lines": 0, "truncated": False}}
             path = run / payload["output_dir"] / "normalized.json"
             write_json(path, document)
+            native = path.parent / "native.txt"
+            native.write_text(f"FIXTURE {stage.upper()} COMPLETED\n", encoding="utf-8")
             return {"tool": "calibre", "version": "fixture-1", "exit_code": 0,
                     "cellview_sha256": self.data["sha256"], "used_files": [str(self.rule)],
-                    "report": "normalized.json", "raw_reports": {"normalized.json": sha256(path)},
+                    "report": "normalized.json", "raw_reports": {"normalized.json": sha256(path), "native.txt": sha256(native)},
                     "source_cdl_sha256": payload["lvs_source"]["cdl_sha256"] if payload["lvs_source"] else None}
         return super().dispatch(run, operation, payload)
 
 
 class LayoutVerificationTest(VerificationFixture):
+    def test_fabricated_native_marker_rejected(self):
+        def fabricated(run, operation, payload):
+            receipt = self.dispatch(run, operation, payload)
+            if operation == "verify" and payload["phase"] == "run":
+                path = run / payload["output_dir"] / "native.txt"
+                path.write_text("NOT COMPLETED\n", encoding="utf-8")
+                receipt["raw_reports"]["native.txt"] = sha256(path)
+            return receipt
+        with patch("analog_agent.layout_verification.execute", side_effect=fabricated), patch("analog_agent.layout_worker.execute", side_effect=self.dispatch), self.assertRaisesRegex(ValueError, "marker"):
+            verify(self.run)
+        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
     def test_human_routing_review_tamper_blocks_verification(self):
         reference = read_json(self.run / "task.json")["active_routing_review"]
         write_json(self.run / reference["path"], {"decision": "changed"})

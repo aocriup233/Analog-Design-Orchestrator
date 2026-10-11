@@ -135,8 +135,18 @@ reports and a normalized JSON report inside the exclusive run output_dir.
 report is relative; raw_reports maps native AND normalized relative paths to
 SHA-256. Rule bytes are rehashed after execution and before final certification.
 
-Normalized report exact fields: schema_version=1, stage, tool, completed=true,
-counts_by_rule, violations, lvs_match. A violation has unique id, rule, layer,
+Normalized report exact fields: schema_version=2, stage, tool, completed,
+counts_by_rule, violations, lvs_match, success_marker, diagnostics. Private
+verification_success_markers maps drc/lvs to audited exact single-line native
+completion texts. success_marker contains found, report, line (one-based), text;
+the worker verifies it against a separate hashed native report and the allowlist.
+diagnostics contains nonnegative extraction_errors, soft_connection_errors,
+property_mismatches, unknown_lines and boolean truncated. Missing completion,
+unknown lines or truncation produce UNCERTAIN; any diagnostic error produces
+FAIL. Only explicit completion and zero errors/counts produce CLEAN. Legacy v1
+reports cannot certify clean and must be regenerated. These are adapter trust
+contracts; actual native parsers and sanitized native fixtures remain deferred.
+A violation has unique id, rule, layer,
 ordered integer-nm bbox, message, mapped schematic nets. Counts must match the
 complete list; truncation/unparsed data cannot certify clean. DRC requires
 lvs_match=null; LVS requires explicit boolean match. Worker derives clean.

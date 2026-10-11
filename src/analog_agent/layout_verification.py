@@ -22,8 +22,8 @@ from .state import status, transition
 def parse_report(raw: bytes, *, stage, tool):
     """Strict portable normalization format, NOT a guessed native tool grammar."""
     data = json.loads(raw)
-    fields(data, {"schema_version", "stage", "tool", "completed", "counts_by_rule", "violations", "lvs_match"})
-    if data["schema_version"] != 1 or data["stage"] != stage or data["tool"] != tool or data["completed"] is not True:
+    fields(data, {"schema_version", "stage", "tool", "completed", "counts_by_rule", "violations", "lvs_match", "success_marker", "diagnostics"})
+    if data["schema_version"] != 2 or data["stage"] != stage or data["tool"] != tool or type(data["completed"]) is not bool:
         raise ValueError("Verification report is incomplete or for another stage/tool")
     counts = data["counts_by_rule"]
     if (not isinstance(counts, dict) or not all(isinstance(k, str) and k for k in counts)
@@ -48,8 +48,21 @@ def parse_report(raw: bytes, *, stage, tool):
         raise ValueError("Violation list and rule counts disagree; truncated reports cannot certify clean")
     if (stage == "lvs" and type(data["lvs_match"]) is not bool) or (stage == "drc" and data["lvs_match"] is not None):
         raise ValueError("LVS needs explicit match; DRC must not claim an LVS result")
-    return {"counts_by_rule": counts, "violations": violations,
-            "clean": not violations and (stage == "drc" or data["lvs_match"] is True)}
+    marker, diagnostics = data["success_marker"], data["diagnostics"]
+    fields(marker, {"found", "report", "line", "text"})
+    if (type(marker["found"]) is not bool or not isinstance(marker["report"], str)
+            or type(marker["line"]) is not int or marker["line"] < 0 or not isinstance(marker["text"], str)
+            or (marker["found"] and (not marker["report"] or marker["line"] < 1 or not marker["text"].strip()))):
+        raise ValueError("Explicit native completion marker evidence required")
+    fields(diagnostics, {"extraction_errors", "soft_connection_errors", "property_mismatches", "unknown_lines", "truncated"})
+    if (any(type(diagnostics[k]) is not int or diagnostics[k] < 0 for k in diagnostics if k != "truncated")
+            or type(diagnostics["truncated"]) is not bool):
+        raise ValueError("Invalid conservative diagnostic counters")
+    uncertain = not data["completed"] or not marker["found"] or diagnostics["unknown_lines"] > 0 or diagnostics["truncated"]
+    failed = bool(violations) or any(diagnostics[k] for k in ("extraction_errors", "soft_connection_errors", "property_mismatches")) or (stage == "lvs" and not data["lvs_match"])
+    clean = not uncertain and not failed
+    return {"counts_by_rule": counts, "violations": violations, "clean": clean,
+            "verdict": "UNCERTAIN" if uncertain else "FAIL" if failed else "CLEAN", "diagnostics": diagnostics, "success_marker": marker}
 
 
 def _workdir(run, cfg, stage):
@@ -142,6 +155,9 @@ def verify(run: Path, *, session=None):
                 if verification_inputs(run.parent.parent, cfg, "drc", list(drc["rule_sha256"]))["rule_sha256"] != drc["rule_sha256"]:
                     raise LayoutEvidenceError("DRC rules changed before LVS resume")
             section = cfg[stage]
+            markers = cfg.get("verification_success_markers", {}).get(stage)
+            if not markers:
+                raise ValueError("Configure audited exact native success markers before verification")
             source_ref = prepare_source(run, cfg, executor=execute) if stage == "lvs" else None
             source_proof = check_source(run, source_ref) if source_ref else None
             declared = execute(run, "verify", {"phase": "inputs", "stage": stage, "tool": cfg["tool"], "config": section})
@@ -180,6 +196,14 @@ def verify(run: Path, *, session=None):
             if hashes.get(normalized.relative_to(run).as_posix()) != hashlib.sha256(raw).hexdigest():
                 raise LayoutEvidenceError("Normalized report must be included in raw hashes")
             parsed = parse_report(raw, stage=stage, tool=cfg["tool"])
+            marker = parsed["success_marker"]
+            if marker["found"]:
+                native = local_path(output, marker["report"])
+                if native == normalized or native.relative_to(run).as_posix() not in hashes or marker["text"] not in markers:
+                    raise LayoutEvidenceError("Success marker is not allowlisted evidence from a hashed native report")
+                lines = native.read_text(encoding="utf-8", errors="strict").splitlines()
+                if marker["line"] > len(lines) or lines[marker["line"] - 1] != marker["text"]:
+                    raise LayoutEvidenceError("Declared native success marker is absent from its exact report line")
             _unchanged_export(run, export)
             require_unchanged_floorplan(run, "verification", session=session)
             if snapshot(run, cfg)["sha256"] != full["sha256"]:
