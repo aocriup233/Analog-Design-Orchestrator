@@ -177,6 +177,13 @@ analog-agent campaign status CAMPAIGN_DIR
 
 After review, call `campaign add CAMPAIGN_DIR NEXT_POINTS.json --decision "reason" --select POINT_ID` for another cycle, or `campaign finish CAMPAIGN_DIR --decision "reason" --select POINT_ID`. A private function configured as `campaign.proposer` (`private/agents/analysis/scripts/site_proposer.py:propose`) can generate an initial or next-cycle proposal with `campaign propose CAMPAIGN_DIR`; inspect its saved JSON and explicitly `add` it. The [private proposer template](private.example/agents/analysis/scripts/site_proposer.py) intentionally contains no PDK method or automatic optimizer.
 
+An optional public multi-objective Bayesian proposer is available with the `[bo]`
+extra: set `campaign.proposer = "analog_agent.proposers.mobo:propose"`, declare
+bounded numeric/enum parameter schemas and objective directions, then review each
+proposal before `campaign add`. It never submits simulations. See [configuration,
+failure handling and deterministic metadata](docs/mobo.md) and the
+[equal-budget, five-seed synthetic benchmark](docs/bench_mobo.md).
+
 `campaign replay PROJECT.json HISTORY.json` is a shared, offline multi-cycle check; [this two-cycle example](examples/replay_history.json) runs with `project.example.json`. The history supplies recorded comparison and decision objects; the core validates each cycle and accumulates a circuit-neutral in-memory evidence ledger. It neither creates runs nor invokes a simulator, and needs no circuit-specific knowledge or proposer. If a private proposer is configured, replay also passes it the ledger to check proposals. A cycle can declare `"source": "proposal"` to require its observed parameter points to come from that round's proposal, or `"manual"` for a human-chosen point. CLI output contains checkpoint IDs and hashes, not private knowledge values. Reuse of private methods in the public project is a separate main-agent review following [knowledge promotion](agents/analysis/skills/knowledge-promotion/SKILL.md); user projects do not provide a publishing hook.
 
 ### Private memory with a bounded LLM context
@@ -210,7 +217,7 @@ Use [waveform_tool.py](agents/analysis/scripts/waveform_tool.py) with the JSON r
 ## Roadmap (not yet part of the released workflow)
 
 - **PVT and Monte Carlo:** add declarative corner, temperature, supply, variation and sample/seed configuration, with bounded scheduling, per-point provenance, partial-failure recovery, and cross-corner/statistical analysis. `virtuoso-bridge` already exposes Maestro controls, but ADO does **not** yet turn Maestro PVT/MC setup, execution and result collection into a portable, tested role workflow. The netlist-driven and Maestro-driven paths should share run evidence and analysis contracts while keeping PDK-specific corners and models private.
-- **Bayesian optimization:** implement an optional, replaceable `campaign.proposer` that uses the accumulated evidence ledger to suggest bounded candidate batches, uncertainty-aware trade-offs and constraint handling. Initial points, objectives, specifications and stop decisions remain user/project-owned; proposals still require user/analysis-AI review before submission. This must not hard-code a circuit family or replace deterministic worker handoffs.
+- **Bayesian optimization extensions:** the optional multi-objective proposer now suggests reviewed batches from all cycle comparisons. Online model reuse, larger categorical spaces, trust-region search and multi-fidelity modeling remain future work. Initial points, objectives, specifications and stop decisions remain user/project-owned; no proposal replaces deterministic worker handoffs or auto-submits.
 - **Layout subagent:** introduce a separately owned layout stage after a reviewed circuit block, with its own immutable artifacts and user approval boundary. Private technology rules and tools would drive layout creation or import, DRC/LVS/PEX checks, and post-layout simulation feedback into the existing analysis/campaign loop. This is a proposed fourth role, not a capability of the current three-worker release.
 
 These items will be promoted only after repeated real-project tests; structural/API availability alone is not electrical or workflow validation.
