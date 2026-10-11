@@ -77,7 +77,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     if not isinstance(document, dict) or set(document) != {"layout"}:
         raise ValueError("Private layout config must contain only a layout object")
     cfg = document["layout"]
-    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection"}:
+    if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge", "allow_leading_digit", "grid_nm", "bbox_tolerance_nm", "detection", "tech_summary", "verification_adapter", "max_fix_iterations"}:
         raise ValueError("Unknown layout configuration fields")
     if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
@@ -132,14 +132,20 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
             if work.is_relative_to(rules) or rules.is_relative_to(work):
                 raise ValueError(f"layout.{run_stage}.run_dir overlaps layout.{rule_stage}.rule_dir")
     bridge = cfg.get("bridge", {})
-    if not isinstance(bridge, dict) or set(bridge) - {"reader"}:
-        raise ValueError("layout.bridge permits only reader")
+    if not isinstance(bridge, dict) or set(bridge) - {"reader", "operations"}:
+        raise ValueError("layout.bridge permits only reader and typed operations")
+    if type(cfg.get("max_fix_iterations", 3)) is not int or cfg.get("max_fix_iterations", 3) < 0:
+        raise ValueError("max_fix_iterations must be a nonnegative integer")
+    if "tech_summary" in cfg:
+        from .layout_routing import validate_tech
+        validate_tech(cfg["tech_summary"])
     manifest = {CONFIG_PATH: hashlib.sha256(data).hexdigest()}
-    reader = bridge.get("reader")
-    if reader is not None:
-        if not isinstance(reader, str) or ":" not in reader:
-            raise ValueError("layout.bridge.reader must be a function reference")
-        location, _ = reader.rsplit(":", 1)
+    for reference in (bridge.get("reader"), bridge.get("operations"), cfg.get("verification_adapter")):
+        if reference is None:
+            continue
+        if not isinstance(reference, str) or ":" not in reference:
+            raise ValueError("Layout adapters must be function references")
+        location, _ = reference.rsplit(":", 1)
         if location.endswith(".py"):
             plugin = local_path(root, location)
             manifest[plugin.relative_to(root).as_posix()] = stream_sha256(plugin)
