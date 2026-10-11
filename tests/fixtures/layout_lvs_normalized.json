@@ -1,0 +1,1 @@
+{"schema_version":2,"stage":"lvs","tool":"pegasus","completed":true,"counts_by_rule":{},"violations":[],"lvs_match":true,"success_marker":{"found":true,"report":"native.txt","line":1,"text":"FIXTURE LVS COMPLETED"},"diagnostics":{"extraction_errors":0,"soft_connection_errors":0,"property_mismatches":0,"unknown_lines":0,"truncated":false}}

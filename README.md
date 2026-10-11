@@ -232,8 +232,12 @@ placement checks. See [the L2 schema and review workflow](docs/layout-constraint
 Draft warnings require explicit acknowledgment; routing release is a separate
 hashed human decision, including explicit acceptance of outstanding placement
 warnings. A placement freeze alone never authorizes routing.
-L3/L4 routing and verification remain unimplemented; these stages do not certify
-a layout or modify placement.
+L3 adds JSON-only routing proposals, allowlisted owned-route workers, same-snapshot
+DRC/LVS handoffs and explicitly reviewed bounded fixes. See
+[the L3 adapter/security contract](docs/layout-routing.md). Missing audited private
+Bridge and native verification adapters fail closed; fake-backend tests do not
+certify a real router, foundry integration or live layout. L4 remains unimplemented.
+No command moves manual instances.
 Plugins and `role_commands` are trusted code/config, not sandboxes; LLM roles
 are restricted to JSON proposals, with no Bridge capability or foundry rules.
 Keep `private/`, `runs/` and `layouts/` ignored in user project repositories.

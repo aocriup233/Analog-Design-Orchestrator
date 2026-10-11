@@ -2,7 +2,9 @@
 
 L1/L2 is an opt-in framework with fake-backend tests, not a certified live Virtuoso
 workflow. [L2 constraints](layout-constraints.md) add reviewed retrieval and
-advisory placement checks. L3 routing/DRC/LVS and L4 generator are not implemented.
+advisory placement checks. [L3 routing/verification](layout-routing.md) adds typed
+worker boundaries with fake-backend tests; live adapters remain a deployment
+prerequisite, not a certified built-in integration. L4 is not implemented.
 The [installed Bridge audit](design/layout-bridge-api.md) found no complete typed
 placement exporter; L1 requires a separately audited read-only adapter and fails
 closed without one. The example adapter deliberately raises NotImplementedError.
@@ -184,7 +186,8 @@ Two digests have deliberately different meanings:
 
 Thus repeated exports preserve placement identity but not timestamped artifact
 identity. This is placement provenance, **not a full cellview geometry/connectivity
-hash** suitable for DRC/LVS. L3 must add that separately.
+hash** suitable for DRC/LVS. L3 adds a separately validated full snapshot contract
+through the audited typed adapter; see [routing and verification](layout-routing.md).
 
 `floorplan-freeze` requires a review reason, verifies the exported byte hash and
 captures the live placement again. A live change publishes a new draft and stays

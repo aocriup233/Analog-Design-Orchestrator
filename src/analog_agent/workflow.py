@@ -11,6 +11,53 @@ from pathlib import Path
 from .core import create_run, read_json, run_config, sha256, update_status, utc_now, write_json
 
 
+def invoke_json_role(role: str, config: dict, context: Path, output: Path, cwd: Path):
+    """Trusted argv hook, JSON proposals only. Does not auto-execute proposals."""
+    import os
+    import signal
+    workflow = config.get("workflow", {})
+    command = workflow.get("role_commands", {}).get(role)
+    timeout = workflow.get("role_timeout_s", 3600)
+    if (not isinstance(command, list) or not command or
+            not all(isinstance(arg, str) and arg for arg in command)):
+        raise ValueError(f"Configure workflow.role_commands.{role} as a trusted argument array")
+    if type(timeout) not in {int, float} or not math.isfinite(timeout) or timeout <= 0:
+        raise ValueError("workflow.role_timeout_s must be finite and positive")
+    if output.exists():
+        raise FileExistsError(output)
+    command = [arg.replace("{context}", str(context)).replace("{output}", str(output)) for arg in command]
+    options = {"start_new_session": True} if os.name != "nt" else {"creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
+    # Withhold conventional bridge credentials. This is defense in depth, not
+    # an OS sandbox: the trusted deployment must isolate sockets and home files.
+    environment = {k: v for k, v in os.environ.items() if not k.startswith(("VB_", "SSH_"))}
+    with (cwd / "role.stderr.log").open("xb") as diagnostics:
+        os.chmod(cwd / "role.stderr.log", 0o600)
+        process = subprocess.Popen(command, cwd=cwd, env=environment, stdout=subprocess.DEVNULL,
+                                   stderr=diagnostics, **options)
+        try:
+            process.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            if os.name == "nt":
+                try:
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"], capture_output=True, timeout=10, check=False)
+                except (OSError, subprocess.TimeoutExpired):
+                    pass
+            else:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            if process.poll() is None:
+                process.kill()
+            try:
+                process.communicate(timeout=10)
+            except subprocess.TimeoutExpired:
+                pass
+            raise TimeoutError("JSON role timed out; reconcile before retry") from exc
+    if process.returncode != 0 or not output.is_file():
+        raise ValueError("JSON role failed or produced no proposal; inspect private role diagnostics")
+
+
 def _remote_cleanup_complete(run: Path) -> bool:
     receipt = run / "remote_cleanup.json"
     if not receipt.is_file():

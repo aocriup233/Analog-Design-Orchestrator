@@ -15,6 +15,10 @@ from .layout_runs import clone_layout, layout_context, layout_path, lock_info, p
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
 from .layout_constraints import constraints_draft, constraints_freeze
 from .layout_placement_check import floorplan_constraints_check, routing_review
+from .layout_routing import propose_routing
+from .layout_worker import route
+from .layout_verification import verify as verify_layout
+from .layout_fix import apply_fix
 from .netlist_agent import prepare
 from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
@@ -109,7 +113,7 @@ def main() -> int:
     layout_prepare.add_argument("schematic", type=Path)
     layout_prepare.add_argument("--allow-failing-design", action="store_true")
     layout_prepare.add_argument("--reason", default="")
-    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review"):
+    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
         if name in {"floorplan-freeze", "constraints-freeze"}:
@@ -236,6 +240,14 @@ def main() -> int:
             output = floorplan_constraints_check(args.run)
         elif args.layout_command == "routing-review":
             output = routing_review(args.run, args.decision, args.reason)
+        elif args.layout_command in {"routing-propose", "fix-propose"}:
+            output = propose_routing(args.run, fix=args.layout_command == "fix-propose")
+        elif args.layout_command == "route":
+            output = route(args.run)
+        elif args.layout_command == "verify":
+            output = verify_layout(args.run)
+        elif args.layout_command == "fix":
+            output = apply_fix(args.run)
         elif args.layout_command == "floorplan-freeze":
             output = floorplan_freeze(args.run, args.reason)
         else:
@@ -263,6 +275,8 @@ def main() -> int:
             output = {k: v for k, v in output.items() if k != "data"}
     print(json.dumps(output, ensure_ascii=False, indent=2))
     if args.command == "layout" and args.layout_command == "floorplan-freeze" and output.get("status") != "FLOORPLAN_FROZEN":
+        return 1
+    if args.command == "layout" and args.layout_command in {"verify", "fix"} and not output.get("clean", False):
         return 1
     return 0
 
