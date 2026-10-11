@@ -236,10 +236,25 @@ L3 adds JSON-only routing proposals, allowlisted owned-route workers, same-snaps
 DRC/LVS handoffs and explicitly reviewed bounded fixes. See
 [the L3 adapter/security contract](docs/layout-routing.md). Missing audited private
 Bridge and native verification adapters fail closed; fake-backend tests do not
-certify a real router, foundry integration or live layout. L4 remains unimplemented.
+certify a real router, foundry integration or live layout. L4 adds only the
+[reserved floorplan plugin interface](docs/layout-floorplan-plugin.md): manual
+by default, hashed private rules and an optional trusted `.py:function` that
+returns proposal JSON. The echo example implements no placement algorithm.
+`floorplan-generate` never applies placement, calls a Bridge operation, freezes
+or routes. A human must make the live layout match the reviewed proposal;
+the existing freeze, L2 check and separate routing-review gates still apply.
 No command moves manual instances.
 Plugins and `role_commands` are trusted code/config, not sandboxes; LLM roles
 are restricted to JSON proposals, with no Bridge capability or foundry rules.
+Every ADO Bridge operation is from the documented typed operation allowlist;
+there is no arbitrary SKILL, `system()` or `sh()` escape hatch. Plugin generation
+is a separate JSON-only operation, not a new Bridge placement capability.
+All plugin calls use `plugins.load_function` and all local inputs/outputs use
+`core.local_path`. Project-local plugins remain trusted executable Python (not
+a sandbox); audit them before configuration. LLM output must never become an
+executable plugin or arbitrary SKILL/shell text. Only the user-configured numeric
+tech summary is supplied as technology information, never raw foundry rule
+files, runsets, credentials or site command configuration.
 Keep `private/`, `runs/` and `layouts/` ignored in user project repositories.
 
 - **PVT and Monte Carlo:** add declarative corner, temperature, supply, variation and sample/seed configuration, with bounded scheduling, per-point provenance, partial-failure recovery, and cross-corner/statistical analysis. `virtuoso-bridge` already exposes Maestro controls, but ADO does **not** yet turn Maestro PVT/MC setup, execution and result collection into a portable, tested role workflow. The netlist-driven and Maestro-driven paths should share run evidence and analysis contracts while keeping PDK-specific corners and models private.

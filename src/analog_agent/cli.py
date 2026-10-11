@@ -13,6 +13,7 @@ from .parameters import validate_values
 from . import memory as project_memory
 from .layout_runs import clone_layout, layout_context, layout_path, lock_info, prepare_layout
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
+from .layout_floorplan_plugin import floorplan_generate
 from .layout_constraints import constraints_draft, constraints_freeze
 from .layout_placement_check import floorplan_constraints_check, routing_review
 from .layout_routing import propose_routing
@@ -113,9 +114,11 @@ def main() -> int:
     layout_prepare.add_argument("schematic", type=Path)
     layout_prepare.add_argument("--allow-failing-design", action="store_true")
     layout_prepare.add_argument("--reason", default="")
-    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
+    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-generate", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
+        if name == "floorplan-generate":
+            action.add_argument("--placement", type=Path, help="Optional private user-supplied placement for an echo generator")
         if name in {"floorplan-freeze", "constraints-freeze"}:
             action.add_argument("--reason", required=True, help="Human review rationale")
         if name == "constraints-freeze":
@@ -232,6 +235,8 @@ def main() -> int:
             output = {"task": read_json(run / "task.json")}
         elif args.layout_command == "floorplan-export":
             output = floorplan_export(args.run)
+        elif args.layout_command == "floorplan-generate":
+            output = floorplan_generate(args.run, placement=args.placement)
         elif args.layout_command == "constraints":
             output = constraints_draft(args.run)
         elif args.layout_command == "constraints-freeze":

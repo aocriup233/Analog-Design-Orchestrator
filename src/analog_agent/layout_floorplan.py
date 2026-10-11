@@ -64,10 +64,15 @@ def instance_identifier(value, *, allow_leading_digit=False) -> str:
 
 def validate_floorplan(document: dict, cfg: dict) -> dict:
     """Schema 2: complete identity, integer nm, configured manufacturing grid."""
+    if not isinstance(document, dict):
+        raise ValueError("Floorplan must be a JSON object")
+    plugin = document.get("source") == "plugin"
     _object(document, {"schema_version", "source", "cellview", "units", "instances", "export_timestamp",
-                       "pins", "labels", "pr_boundary"}, "floorplan")
-    if type(document["schema_version"]) is not int or document["schema_version"] != 2 or document["source"] != "manual":
-        raise ValueError("L1 requires schema_version=2 and source=manual; legacy snapshots need a new run")
+                       "pins", "labels", "pr_boundary"} | ({"plugin_sha256"} if plugin else set()), "floorplan")
+    if type(document["schema_version"]) is not int or document["schema_version"] != 2 or not isinstance(document["source"], str) or document["source"] not in {"manual", "plugin"}:
+        raise ValueError("Floorplan requires schema_version=2 and source=manual|plugin")
+    if plugin and (cfg.get("floorplan", {}).get("mode", "manual") != "plugin" or not isinstance(document["plugin_sha256"], str) or not re.fullmatch(r"[0-9a-f]{64}", document["plugin_sha256"])):
+        raise ValueError("Plugin floorplan requires plugin mode and a SHA-256 provenance hash")
     target = _object(document["cellview"], {"library", "cell", "view", "path"}, "cellview")
     if not isinstance(document["units"], str) or document["units"] not in UNITS:
         raise ValueError("Placement units must be authoritative um, nm or m")
@@ -165,7 +170,10 @@ def placement_sha256(floorplan: dict) -> str:
     """Hash canonical placement content, not clock-dependent export metadata."""
     if floorplan.get("units") != "nm" or floorplan.get("schema_version") != 2:
         raise ValueError("placement_sha256 requires validate_floorplan's integer-nm canonical form")
-    content = {key: value for key, value in floorplan.items() if key != "export_timestamp"}
+    content = {key: value for key, value in floorplan.items() if key not in {"export_timestamp", "plugin_sha256"}}
+    # Physical identity must compare a plugin proposal with read-only live manual
+    # capture. Keep legacy manual hashes unchanged; provenance is separately pinned.
+    content["source"] = "manual"
     return hashlib.sha256(json.dumps(content, sort_keys=True, separators=(",", ":"),
                                     allow_nan=False).encode("utf-8")).hexdigest()
 
@@ -176,6 +184,8 @@ def _capture(run: Path, cfg: dict) -> dict:
     raw = layout_bridge.read_placement(run, number_value(str(cfg.get("timeout_s", 300))))
     if not isinstance(raw, dict):
         raise ValueError("Placement reader must return a floorplan object")
+    if raw.get("source") != "manual":
+        raise ValueError("Live placement reader must report source=manual, never plugin provenance")
     floorplan = validate_floorplan({**raw, "export_timestamp": utc_now()}, cfg)
     # Detect config/evidence changes during a slow Bridge read before publication.
     layout_context(run)
@@ -192,6 +202,9 @@ def _frozen_unchecked(run: Path, cfg: dict) -> dict:
         raise ValueError("Frozen floorplan receipt changed")
     receipt = json.loads(raw)
     floorplan = validate_floorplan(receipt["floorplan"], cfg)
+    if floorplan["source"] == "plugin":
+        from .layout_floorplan_plugin import check_generation
+        check_generation(run, floorplan, receipt.get("generation"))
     if placement_sha256(floorplan) != receipt["placement_sha256"]:
         raise ValueError("Frozen placement hash mismatch")
     if receipt["inputs_sha256"] != sha256(local_path(run, "layout_inputs.json")):
@@ -290,6 +303,9 @@ def floorplan_freeze(run: Path, reason: str) -> dict:
                 raise LayoutEvidenceError("Reviewed placement evidence is invalid") from exc
             if placement_sha256(reviewed) != export.get("placement_sha256"):
                 raise LayoutEvidenceError("Reviewed placement hash mismatch")
+            if reviewed["source"] == "plugin":
+                from .layout_floorplan_plugin import check_generation
+                check_generation(run, reviewed, export.get("generation"))
             from .layout_placement_check import build_check_report, publish_check_snapshot
             report = build_check_report(reviewed, constraints, sha256(local_path(run, "layout_inputs.json")))
             live = _capture(run, cfg)
@@ -304,6 +320,8 @@ def floorplan_freeze(run: Path, reason: str) -> dict:
                        "constraints_freeze": constraints["reference"],
                        "placement_check": check_reference,
                        "reason": reason.strip(), "frozen_at": utc_now()}
+            if reviewed["source"] == "plugin":
+                receipt["generation"] = export["generation"]
             destination = local_path(run, f"floorplan_freezes/{uuid.uuid4().hex}.json")
             write_json(destination, receipt)
             reference = {"path": destination.relative_to(run).as_posix(), "sha256": sha256(destination)}

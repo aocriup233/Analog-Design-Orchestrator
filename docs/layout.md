@@ -1,5 +1,14 @@
 # Layout L1/L2: configuration, constraints and manual floorplan
 
+L4's optional [floorplan plugin contract](layout-floorplan-plugin.md) extends
+schema 2 with `source="plugin"` and required `plugin_sha256`. It only proposes
+JSON; no placement algorithm or mutation is implemented. Live Bridge exports
+always remain `source="manual"`. Physical placement hashes ignore generation
+provenance so identical live/proposed geometry compares equal; full file,
+generation and freeze receipts separately pin that provenance. Existing manual
+placement hashes are unchanged. Plugin proposals use the same human freeze,
+live readback, L2 constraint check and separate routing-release gates.
+
 L1/L2 is an opt-in framework with fake-backend tests, not a certified live Virtuoso
 workflow. [L2 constraints](layout-constraints.md) add reviewed retrieval and
 advisory placement checks. [L3 routing/verification](layout-routing.md) adds typed

@@ -42,3 +42,63 @@ These preferences are not DRC rules. Guard rings and pin preferences do not
 create geometry; bbox keep-outs do not certify foundry spacing. Only existing
 L2 frozen constraint checks and later real DRC/LVS can provide their respective
 evidence. See [private empty rule template](../private.example/layout/floorplan_rules.json).
+
+## Generator contract and explicit review
+
+`generate(context) -> floorplan dict` is loaded through `plugins.load_function`
+in the existing isolated, finite-time executor. It receives schema_version,
+run_id, target, inputs_sha256, the pinned schematic link, frozen constraints,
+the original validated rules document, rules_sha256, plugin_sha256,
+user_placement (or null), user_placement_sha256 (or null), and the optional
+validated numeric tech_summary. It receives no raw DRC/LVS rule files, runsets,
+credentials or site executable configuration. Rules are passed unchanged.
+
+Return exactly the L1 schema-2 floorplan, with source="plugin" and the additional
+plugin_sha256 equal to the configured file's pinned SHA-256. All geometry,
+grid, target, bbox, PCell parameter hashes and identifier checks still apply.
+Rows/regions/member, matching-group and pin references must exist. These
+preferences are not newly enforced placement/optimization algorithms.
+
+```sh
+analog-agent layout constraints RUN
+analog-agent layout constraints-freeze RUN --reason "reviewed constraints"
+analog-agent layout floorplan-generate RUN --placement private/layout/placement.json
+# Inspect proposal JSON; the user separately places the live cell in Virtuoso.
+analog-agent layout floorplan-freeze RUN --reason "reviewed proposal and live placement"
+analog-agent layout routing-review RUN --decision proceed --reason "reviewed placement check"
+```
+
+If warnings remain, use the existing constraints acknowledgment and explicit
+`proceed-with-warnings` routing decision. Generating does not change
+FLOORPLAN_PENDING or authorize routing. `--placement` is optional and must be
+inside the project private directory; the echo example requires it. That file
+is a complete source=manual schema-2 floorplan, not a list of xy values.
+Relative paths are project-relative, not shell-cwd-relative. The example
+[generator](../private.example/layout/floorplan_generator.py) copies it and
+changes only source/provenance; it makes no placement decisions.
+
+Generation pins the candidate canonical document, rules, generator, linked
+inputs, constraints freeze and optional user input. Files and proof receipts
+remain inside the run and are checked again at freeze and later checkpoints.
+Same inputs through the echo generator produce identical candidate hashes;
+unique receipt filenames are audit identities, not deterministic placement.
+Export timestamps and generation provenance are excluded from physical
+placement identity, while full JSON and proof hashes retain them. Legacy manual
+physical hashes remain unchanged. A live read must match the proposed physical
+identity before freeze; on mismatch the live export is published for review,
+state stays FLOORPLAN_PENDING, and the historical generation proof is retained.
+After freeze the same L2 check is hash-bound into the freeze receipt, and
+unchanged placement is rechecked before/after routing and verification.
+
+## Trust boundaries and limitations
+
+The new generate_floorplan operation is JSON-only, not a Bridge operation.
+ADO dispatches no placement mutation, raw SKILL, system() or sh(). Bridge workers
+continue to accept only L0's fixed typed operation allowlist. LLM roles write
+plan/proposal JSON only; they do not supply executable plugins or call Bridge.
+Configuration-level Python plugins and role_commands remain trusted code, not
+sandboxes. A malicious plugin can perform arbitrary Python actions regardless
+of its signature; owners must audit configured plugins and their dependencies.
+The echo plugin is deliberately import-light and does not invoke EDA tools.
+No automatic placement algorithm, live router, foundry verification or remote
+deployment is claimed. Manual mode and all previous human gates remain intact.

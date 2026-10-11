@@ -20,14 +20,18 @@ from .parameters import number_value
 
 OPERATIONS = frozenset({"read_layout_snapshot", "read_terminals", "append_path", "append_via",
                         "remove_owned_routes", "save_target", "export_verification_snapshot", "verify",
-                        "generate_lvs_source", "normalize_lvs_source"})
+                        "generate_lvs_source", "normalize_lvs_source", "generate_floorplan"})
 
 
 def configured(run, operation):
     if operation not in OPERATIONS:
         raise ValueError("Operation is not in the L0 typed allowlist")
     cfg, project = layout_context(run)
-    if operation in {"generate_lvs_source", "normalize_lvs_source"}:
+    if operation == "generate_floorplan":
+        if cfg.get("floorplan", {}).get("mode", "manual") != "plugin":
+            raise ValueError("Floorplan generation requires plugin mode")
+        reference = cfg["floorplan"].get("generator")
+    elif operation in {"generate_lvs_source", "normalize_lvs_source"}:
         key = "generator" if operation == "generate_lvs_source" else "normalizer"
         reference = cfg.get("lvs_source", {}).get(key)
     else:
@@ -40,7 +44,7 @@ def configured(run, operation):
 def call_adapter(run, request):
     cfg, project, reference = configured(run, request["operation"])
     function = load_function(reference, run.parent.parent, project)
-    return function(request)
+    return function(request["payload"]) if request["operation"] == "generate_floorplan" else function(request)
 
 
 def execute(run, operation, payload):
