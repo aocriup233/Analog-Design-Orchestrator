@@ -3,6 +3,8 @@ __pycache__/
 .venv/
 runs/
 layouts/
+private_logs/
+reader_results/
 campaigns/
 .env
 /private/

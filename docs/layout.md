@@ -171,7 +171,15 @@ The only L1 operation ID is `read_placement`. The trusted adapter signature is
 exact target library/cell/view, and numeric timeout; it contains no live client,
 raw SKILL, shell command, rule content or writable floorplan operation. The
 worker supplies/overwrites the export timestamp and validates the full schema.
-Adapter logging is separated from the JSON stdout channel.
+The parent supplies a run-confined `reader_results/<uuid>.json` path. The child
+creates it exclusively with mode 0600 and fsyncs its JSON envelope; stdout is
+not a data channel. Logs/tracebacks go only to an exclusively created mode-0600
+`private_logs/reader-<timestamp>-<uuid>.log`; errors carry the relative log path,
+never its content. Both trees must remain ignored by Git. POSIX permissions are
+enforced by file mode; Windows deployments must restrict the user directory ACL.
+Python 3.11+ children use `-P`; all versions run in a dedicated empty temporary
+cwd (cleaned after exit). PYTHONPATH is pinned to the already imported ADO package
+root, not inherited from a project, preventing an `analog_agent/` shadow package.
 
 All plugins pass through `plugins.load_function`, including its module allowlist
 and forbidden callable checks. Project-local Python is still trusted executable
@@ -189,6 +197,8 @@ PID-specific `taskkill /T /F` with direct-process fallback. This does **not**
 cancel a remote CIW operation or certify detached-child cleanup. Timeout enters
 NEEDS_ATTENTION and explicitly requires Bridge reconciliation. Raw adapter
 stderr is not copied into handoffs, since it may contain private details.
+Even if the second communicate after killing times out, the error remains
+TimeoutError; no claim of remote or detached-process cleanup is made.
 
 LLM roles may only write plan/proposal JSON, never call this adapter, freeze
 their own proposals, emit executable SKILL or receive foundry rules. Private
