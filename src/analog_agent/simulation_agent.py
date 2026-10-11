@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import os
 
 from .backends import backend_for, json_safe
 from .core import read_json, run_config, sha256, utc_now, write_json
@@ -74,14 +76,14 @@ def submit(run: Path, simulator_factory=None) -> dict:
         result = payload["backend_data"]
     else:
         intent = run / "submission_intent.json"
-        if intent.is_file():
-            previous = read_json(intent)
-            if previous.get("deck_sha256") != staged["deck_sha256"]:
-                raise ValueError("Submission intent has a different deck hash")
-            raise ValueError("Submission outcome unknown; inspect the backend by run ID before retrying")
-        write_json(intent, {"started_at": utc_now(), "run_id": run.name,
-                            "backend": staged["backend"],
-                            "deck_sha256": staged["deck_sha256"]})
+        try:
+            with intent.open("x", encoding="utf-8") as stream:
+                json.dump({"started_at": utc_now(), "run_id": run.name,
+                           "backend": staged["backend"], "deck_sha256": staged["deck_sha256"]}, stream)
+                stream.flush()
+                os.fsync(stream.fileno())
+        except FileExistsError as error:
+            raise ValueError("Submission outcome unknown; inspect the backend by run ID before retrying") from error
         backend = backend_for(cfg, run, simulator_factory)
         result = backend.submit(run, cfg, staged["backend_data"])
     return _record_submission(run, staged, result, existing)
