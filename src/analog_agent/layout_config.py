@@ -50,7 +50,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     root = root.resolve()
     path = local_path(root, CONFIG_PATH)
     # A symlink into public config must not turn this into a public config hook.
-    if not path.is_relative_to(local_path(root, "private")):
+    if not path.is_relative_to(root / "private"):
         raise ValueError("Layout config must remain inside private/")
     data = path.read_bytes()
     document = json.loads(data)
@@ -59,7 +59,7 @@ def load_layout_config(root: Path) -> tuple[dict, dict[str, str]]:
     cfg = document["layout"]
     if not isinstance(cfg, dict) or set(cfg) - {"tool", "library", "cell", "timeout_s", "drc", "lvs", "bridge"}:
         raise ValueError("Unknown layout configuration fields")
-    if cfg.get("tool") not in {"pegasus", "calibre"}:
+    if not isinstance(cfg.get("tool"), str) or cfg["tool"] not in {"pegasus", "calibre"}:
         raise ValueError("layout.tool must be pegasus or calibre")
     for name in ("library", "cell"):
         identifier(cfg.get(name), f"layout.{name}")

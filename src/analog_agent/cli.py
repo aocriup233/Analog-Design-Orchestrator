@@ -11,6 +11,8 @@ from . import campaign as campaign_flow
 from .core import create_run, load_config, read_json, run_config
 from .parameters import validate_values
 from . import memory as project_memory
+from .layout_runs import layout_context, layout_path, prepare_layout
+from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
 from .netlist_agent import prepare
 from .replay import replay as replay_history
 from .simulation_agent import cleanup_remote, reconcile_submission, simulate
@@ -99,6 +101,17 @@ def main() -> int:
     choice.add_argument("--approve", action="store_true")
     choice.add_argument("--reject", action="store_true")
     memory_review.add_argument("--reason", required=True)
+    layout = sub.add_parser("layout", help="Linked layout runs and manual floorplan review")
+    layout_actions = layout.add_subparsers(dest="layout_command", required=True)
+    layout_prepare = layout_actions.add_parser("prepare", help="Link a verified/analyzed schematic run")
+    layout_prepare.add_argument("schematic", type=Path)
+    for name in ("status", "floorplan-export", "floorplan-freeze", "floorplan-check"):
+        action = layout_actions.add_parser(name)
+        action.add_argument("run", type=Path)
+        if name == "floorplan-freeze":
+            action.add_argument("--reason", required=True, help="Human review rationale")
+        if name == "floorplan-check":
+            action.add_argument("--before", choices=["routing", "verification"], required=True)
     worker = sub.add_parser("worker", help=argparse.SUPPRESS)
     worker.add_argument("role", choices=["netlist", "simulation", "analysis"])
     worker.add_argument("run", type=Path)
@@ -192,6 +205,19 @@ def main() -> int:
             output = {key: value for key, value in result.items() if key != "final_knowledge"}
         else:
             output = campaign_flow.propose(args.campaign)
+    elif args.command == "layout":
+        if args.layout_command == "prepare":
+            output = {"run": str(prepare_layout(args.schematic)), "status": "LAYOUT_PREPARED"}
+        elif args.layout_command == "status":
+            run = layout_path(args.run)
+            layout_context(run)
+            output = {"task": read_json(run / "task.json")}
+        elif args.layout_command == "floorplan-export":
+            output = floorplan_export(args.run)
+        elif args.layout_command == "floorplan-freeze":
+            output = floorplan_freeze(args.run, args.reason)
+        else:
+            output = require_unchanged_floorplan(args.run, args.before)
     elif args.command == "memory":
         cfg = load_config(args.config)
         if args.memory_command == "brief":

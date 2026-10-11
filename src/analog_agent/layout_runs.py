@@ -73,6 +73,8 @@ def prepare_layout(schematic: Path) -> Path:
     source, _, net = _schematic(root, schematic.name)
     _, manifest = load_layout_config(root)
     layouts = local_path(root, "layouts")
+    if layouts.parent != root or layouts.name != "layouts":
+        raise ValueError("Layout storage must be the project's direct layouts/ directory")
     run = local_path(layouts, uuid.uuid4().hex)
     run.mkdir(parents=True, exist_ok=False)
     now = utc_now()
