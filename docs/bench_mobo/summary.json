@@ -1,0 +1,44 @@
+[
+  {
+    "dimension": 2,
+    "method": "random",
+    "final_hv_mean": 10.611835191170773,
+    "final_hv_std": 0.3952687176728339,
+    "mean_wall_seconds": 0.0003073999996558996
+  },
+  {
+    "dimension": 2,
+    "method": "nsga2",
+    "final_hv_mean": 10.896119523583998,
+    "final_hv_std": 0.5315267724049315,
+    "mean_wall_seconds": 0.04235264000017196
+  },
+  {
+    "dimension": 2,
+    "method": "mobo",
+    "final_hv_mean": 11.698393646254523,
+    "final_hv_std": 0.014733281948324156,
+    "mean_wall_seconds": 13.915210000000116
+  },
+  {
+    "dimension": 4,
+    "method": "random",
+    "final_hv_mean": 9.669881812821467,
+    "final_hv_std": 0.29347195011811233,
+    "mean_wall_seconds": 0.0003999800001110998
+  },
+  {
+    "dimension": 4,
+    "method": "nsga2",
+    "final_hv_mean": 9.928645497146977,
+    "final_hv_std": 0.5180478465223481,
+    "mean_wall_seconds": 0.008027540000148293
+  },
+  {
+    "dimension": 4,
+    "method": "mobo",
+    "final_hv_mean": 11.555758376907223,
+    "final_hv_std": 0.01383602219310903,
+    "mean_wall_seconds": 14.355973699999959
+  }
+]
