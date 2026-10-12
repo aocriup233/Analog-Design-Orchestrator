@@ -71,7 +71,7 @@ class BridgeBackend:
                 "spectre_cmd": command,
                 "spectre_args": spectre_mode_args(opts.get("mode", "ax")),
                 "timeout": int(opts.get("timeout_s", 600)),
-                "work_dir": run / "raw",
+                "work_dir": local_path(run, config.get("_attempt_dir", str(run))) / "raw",
                 "output_format": opts.get("output_format", "psfascii"),
             }
             if self.local:
@@ -135,7 +135,8 @@ class LSFBackend:
     def submit(self, run: Path, config: dict, staged: dict) -> dict:
         result = self._call("submit", run, config, staged)
         if not result.get("job_id") or result.get("state") not in {"SUBMITTED", "RUN", "DONE"}:
-            raise ValueError("LSF submit must return job_id and submitted state")
+            from .failures import UnknownStateError
+            raise UnknownStateError("LSF submit must return job_id and submitted state; reconcile")
         return result
 
     def reconcile(self, run: Path, config: dict, staged: dict, intent: dict) -> dict:
@@ -154,12 +155,13 @@ class LSFBackend:
         return result
 
     def retrieve(self, run: Path, config: dict, submitted: dict) -> dict:
-        result = self._call("retrieve", run, config, submitted)
+        output = local_path(run, config.get("_attempt_dir", str(run)))
+        result = self._call("retrieve", output, config, submitted)
         artifacts = result.get("artifacts")
         if not isinstance(artifacts, list) or not artifacts:
             raise ValueError("LSF retrieval must list local artifacts")
         for artifact in artifacts:
-            path = local_path(run, artifact["path"]).resolve(strict=True)
+            path = local_path(output, artifact["path"]).resolve(strict=True)
             if not path.is_relative_to(run.resolve()):
                 raise ValueError("Retrieved artifact escapes the run directory")
             actual = sha256(path)

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from .core import local_path, read_json, utc_now, write_json
 
-TERMINAL = {"DONE", "FAILED", "EXITED", "RECONCILED"}
+TERMINAL = {"DONE", "FAILED", "EXITED", "RECONCILED", "RETRYABLE_FAILED", "NEEDS_HUMAN"}
 
 
 def options(config):
@@ -62,8 +62,10 @@ class TaskMonitor:
         # This is a monitor/worker heartbeat, NOT proof of scheduler progress.
         write_json(local_path(self.path.parent, "heartbeat.json"), {"at_s": self.clock(), "at": utc_now()})
 
-    def record(self, state, *, progress=None, identity=None):
+    def record(self, state, *, progress=None, identity=None, failure=None):
         value = read_json(self.path)
+        if failure is not None:
+            value["failure"] = failure
         if identity is not None:
             value["identity"] = identity
         if progress is not None and progress != value["progress"]:
@@ -112,12 +114,15 @@ class TaskMonitor:
         while True:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                self.record("STALLED")
-                raise TimeoutError("Task operation timed out; inspect monitor and reconcile; never resubmit automatically")
+                error = TimeoutError("Task operation timed out; inspect monitor and reconcile; never resubmit automatically")
+                from .failures import classify
+                self.record("STALLED", failure=classify(error))
+                raise error
             try:
                 ok, value = result.get(timeout=min(policy["poll_interval_s"], remaining))
                 if not ok:
-                    self.record("STALLED")
+                    from .failures import classify
+                    self.record("STALLED", failure=classify(value))
                     raise value
                 return value
             except queue.Empty:
@@ -153,7 +158,9 @@ class TaskMonitor:
         failed = False
         try:
             yield
-        except BaseException:
+        except BaseException as error:
+            from .failures import classify
+            self.record("STALLED", failure=classify(error))
             failed = True
             raise
         finally:

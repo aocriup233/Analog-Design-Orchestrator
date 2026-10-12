@@ -133,6 +133,12 @@ For any backend, choose `simulation.rules` (for example the public [DC](agents/s
 
 ## Operate a run
 
+S3 records conservative failure classes and immutable attempt evidence. Safe
+operations use bounded exponential backoff; uncertain submissions never retry.
+After token/context/process interruption, `analog-agent recover RUN_DIR` checks
+existing evidence without submitting. See [failure and recovery contracts,
+including the LSF retrieval adapter change](docs/failure-recovery.md).
+
 S2 adds a shared read-only input hash gate and durable task heartbeat/progress
 monitor. `analog-agent inspect RUN_DIR` reports STALLED separately from the
 unchanged circuit state; it never resubmits. Legacy schematic runs without a

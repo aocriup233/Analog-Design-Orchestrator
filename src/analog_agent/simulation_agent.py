@@ -13,6 +13,31 @@ from .sim_rules import build_deck
 from .state import status, transition
 from .task_monitor import TaskMonitor
 from .input_gate import checked_stage
+from .failures import execute_operation, UnknownStateError, reconciled_submission
+
+
+def _backend_operation(run, cfg, method, *args, simulator_factory=None, timeout_s=None):
+    def attempt(directory):
+        scoped = {**cfg, "_attempt_dir": str(directory), "_run_id": run.name, "_run_dir": str(run)}
+        monitor = TaskMonitor.start(run, "simulation" if method == "submit" else "simulation_" + method, cfg,
+                                    identity={"run_id": run.name})
+        try:
+            result = monitor.call(lambda: getattr(backend_for(scoped, run, simulator_factory), method)(run, scoped, *args),
+                                  timeout_s=timeout_s)
+        except BaseException as error:
+            from .failures import classify
+            failure = classify(error, "simulation_" + method, replay_safe=method in {"poll", "retrieve", "verify"})
+            monitor.record("RETRYABLE_FAILED" if failure["class"] == "retryable" else
+                           "NEEDS_HUMAN" if failure["class"] == "needs_human" else "STALLED", failure=failure)
+            raise
+        if method == "submit" and (result.get("state") not in {"SUBMITTED", "RUN", "DONE", "FAILED"} or
+                (cfg.get("simulation", {}).get("backend") == "lsf" and not result.get("job_id"))):
+            raise UnknownStateError("Submission missing a verified job id/state; reconcile")
+        monitor.record(result.get("state", "DONE"), progress=result.get("progress", result.get("state", method)),
+                       identity={"run_id": run.name, "job_id": result.get("job_id")})
+        return {**result, "monitor": monitor.reference} if method == "submit" else result
+    return execute_operation(run, "simulation_" + method, cfg, attempt,
+                             replay_safe=method in {"poll", "retrieve", "verify"})
 
 
 def _config_and_netlist(run: Path):
@@ -24,6 +49,7 @@ def _config_and_netlist(run: Path):
     return cfg, net, design
 
 
+@checked_stage("simulation_stage")
 def stage(run: Path, simulator_factory=None) -> dict:
     run = run.resolve()
     from .input_gate import verify_inputs
@@ -57,9 +83,7 @@ def stage(run: Path, simulator_factory=None) -> dict:
     task = read_json(run / "task.json")
     pin_handoffs(run, task)
     write_json(run / "task.json", task)
-    monitor = TaskMonitor.start(run, "simulation_stage", cfg)
-    staged = monitor.call(lambda: backend_for(cfg, run, simulator_factory).stage(run, cfg, plan))
-    monitor.record("DONE", progress="staged")
+    staged = _backend_operation(run, cfg, "stage", plan, simulator_factory=simulator_factory)
     if staged.get("input_sha256") != plan["deck_sha256"]:
         raise ValueError("Backend did not stage the expected deck hash")
     payload = {"status": "STAGED", "at": utc_now(), "backend": cfg.get("simulation", {}).get("backend", "bridge"),
@@ -70,6 +94,7 @@ def stage(run: Path, simulator_factory=None) -> dict:
     return payload
 
 
+@checked_stage("simulation_submit")
 def submit(run: Path, simulator_factory=None) -> dict:
     run = run.resolve()
     from .input_gate import verify_inputs
@@ -95,25 +120,21 @@ def submit(run: Path, simulator_factory=None) -> dict:
                 stream.flush()
                 os.fsync(stream.fileno())
         except FileExistsError as error:
-            raise ValueError("Submission outcome unknown; inspect the backend by run ID before retrying") from error
+            raise UnknownStateError("Submission outcome unknown; inspect the backend by run ID before retrying") from error
         from .core import _fsync_directory
         from .input_gate import pin_handoffs
         _fsync_directory(run)
         task = read_json(run / "task.json")
         pin_handoffs(run, task)
         write_json(run / "task.json", task)
-        monitor = TaskMonitor.start(run, "simulation", cfg, identity={"run_id": run.name})
-        result = monitor.call(lambda: backend_for(cfg, run, simulator_factory).submit(run, cfg, staged["backend_data"]))
-        monitor.record(result.get("state", "STALLED"), progress=result.get("progress", result.get("state")),
-                       identity={"job_id": result.get("job_id"), "run_id": run.name})
-        result = {**result, "monitor": monitor.reference}
+        result = _backend_operation(run, cfg, "submit", staged["backend_data"], simulator_factory=simulator_factory)
     return _record_submission(run, staged, result, existing)
 
 
 def _record_submission(run: Path, staged: dict, result: dict, existing: Path) -> dict:
     state = result.get("state")
     if state not in {"SUBMITTED", "RUN", "DONE", "FAILED"}:
-        raise ValueError(f"Backend submitted an invalid state: {state}")
+        raise UnknownStateError(f"Backend submitted an invalid state: {state}; reconcile")
     if existing.is_file():
         payload = read_json(existing)
     else:
@@ -129,6 +150,7 @@ def _record_submission(run: Path, staged: dict, result: dict, existing: Path) ->
         transition(run, "FAILED", job_id=result.get("job_id"))
         write_json(run / "simulation_result.json", {
             "status": "FAILED", "finished_at": utc_now(),
+            "failure": {"class": "needs_human", "code": "simulator_failed", "next_step": "review simulator evidence"},
             "errors": result.get("result", {}).get("errors", result.get("errors", [])),
             "netlist_sha256": staged["netlist_sha256"]})
     else:
@@ -138,6 +160,7 @@ def _record_submission(run: Path, staged: dict, result: dict, existing: Path) ->
     return payload
 
 
+@checked_stage("reconcile")
 def reconcile_submission(run: Path) -> dict:
     """Adopt a remote job found by a private adapter; never submit it again."""
     run = run.resolve()
@@ -147,7 +170,9 @@ def reconcile_submission(run: Path) -> dict:
         raise ValueError("Reconciliation requires a STAGED run")
     existing = run / "submission_result.json"
     if existing.is_file():
-        return submit(run)
+        payload = submit(run)
+        reconciled_submission(run, str(existing))
+        return payload
     intent_path = run / "submission_intent.json"
     if not intent_path.is_file():
         raise ValueError("No uncertain submission intent exists")
@@ -179,9 +204,11 @@ def reconcile_submission(run: Path) -> dict:
                               "intent_sha256": sha256(intent_path), "at": utc_now()})
             entry["reconciliation"] = {"path": proof.relative_to(run).as_posix(), "sha256": sha256(proof)}
     write_json(run / "task.json", task)
+    reconciled_submission(run, str(existing))
     return payload
 
 
+@checked_stage("simulation_poll")
 def poll(run: Path, *, timeout_s=None) -> dict:
     run = run.resolve()
     from .input_gate import verify_inputs
@@ -198,7 +225,7 @@ def poll(run: Path, *, timeout_s=None) -> dict:
         reference = submitted.get("monitor")
         monitor = TaskMonitor(run, reference) if reference else TaskMonitor.start(run, "simulation", cfg,
                               identity={"job_id": submitted["backend_data"].get("job_id")})
-        result = monitor.call(lambda: backend_for(cfg, run).poll(run, cfg, submitted["backend_data"]), timeout_s=timeout_s)
+        result = _backend_operation(run, cfg, "poll", submitted["backend_data"], timeout_s=timeout_s)
         monitor.record(result.get("state", "STALLED"), progress=result.get("progress", result.get("state")))
         result = {**result, "monitor": monitor.reference}
     new = result.get("state")
@@ -212,10 +239,12 @@ def poll(run: Path, *, timeout_s=None) -> dict:
     if new == "FAILED":
         write_json(run / "simulation_result.json", {
             "status": "FAILED", "finished_at": utc_now(), "errors": result.get("errors", []),
+            "failure": {"class": "needs_human", "code": "simulator_failed", "next_step": "review simulator evidence"},
             "netlist_sha256": submitted["netlist_sha256"]})
     return payload
 
 
+@checked_stage("simulation_retrieve")
 def retrieve(run: Path) -> dict:
     run = run.resolve()
     from .input_gate import verify_inputs
@@ -232,16 +261,15 @@ def retrieve(run: Path) -> dict:
         _check_artifacts(run, result)
         transition(run, "RETRIEVED")
         return read_json(existing)
-    monitor = TaskMonitor.start(run, "simulation_retrieve", cfg)
-    result = monitor.call(lambda: backend_for(cfg, run).retrieve(run, cfg, submitted["backend_data"]))
+    result = _backend_operation(run, cfg, "retrieve", submitted["backend_data"])
     _check_artifacts(run, result)
-    monitor.record("DONE", progress="retrieved")
     payload = {"status": "RETRIEVED", "retrieved_at": utc_now(), "backend_data": json_safe(result)}
     write_json(run / "retrieval_result.json", payload)
     transition(run, "RETRIEVED")
     return payload
 
 
+@checked_stage("simulation_verify")
 def verify(run: Path) -> dict:
     run = run.resolve()
     from .input_gate import verify_inputs
@@ -271,12 +299,9 @@ def verify(run: Path) -> dict:
             raise ValueError("Simulation deck handoff changed")
     retrieved = read_json(run / "retrieval_result.json")
     _check_artifacts(run, retrieved["backend_data"])
-    monitor = TaskMonitor.start(run, "simulation_verify", cfg)
-    result = monitor.call(lambda: backend_for(cfg, run).verify(run, cfg, submitted["backend_data"],
-                                          retrieved["backend_data"]))
+    result = _backend_operation(run, cfg, "verify", submitted["backend_data"], retrieved["backend_data"])
     if result.get("errors"):
         raise ValueError(f"Backend verification returned errors: {result['errors']}")
-    monitor.record("DONE", progress="verified")
     payload = {"status": "DONE", "finished_at": utc_now(),
                "bridge_status": result.get("bridge_status", "VERIFIED"),
                "errors": [], "warnings": result.get("warnings", []),

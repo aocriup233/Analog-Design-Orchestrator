@@ -1,5 +1,9 @@
 # Layout L1/L2: configuration, constraints and manual floorplan
 
+S3 adds classified [immutable attempt/recovery evidence](failure-recovery.md).
+Typed-operation retries require an audited no-side-effects attestation; unknown
+layout execution is never retried automatically and stale locks stay untouched.
+
 S2 stage entry gates now reject pinned-input mismatches **without changing the
 current state**, before any Bridge call. This supersedes the older preflight
 tampering-to-NEEDS_ATTENTION behaviour below; failures discovered after execution

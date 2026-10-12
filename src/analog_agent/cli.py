@@ -51,6 +51,8 @@ def main() -> int:
     status.add_argument("run", type=Path)
     inspect = sub.add_parser("inspect")
     inspect.add_argument("run", type=Path)
+    recover = sub.add_parser("recover", help="Read-only recovery checks after context/token/process interruption; never submits")
+    recover.add_argument("run", type=Path)
     monitor = sub.add_parser("monitor")
     monitor.add_argument("run", type=Path)
     monitor.add_argument("--max-seconds", type=float, default=60)
@@ -198,15 +200,32 @@ def main() -> int:
     elif args.command == "monitor":
         from .task_monitor import watch_tasks
         output = watch_tasks(args.run, max_seconds=args.max_seconds)
-    elif args.command in {"status", "inspect"}:
+    elif args.command in {"status", "inspect", "recover"}:
         run = args.run.resolve()
+        if args.command == "recover":
+            from .input_gate import verify_inputs
+            verify_inputs("recovery", run)
         task = read_json(run / "task.json")
         output = {"task": task}
         if task.get("kind") != "layout":
             output["obligation"] = role_obligation(run)
         from .task_monitor import inspect_tasks
         output["tasks"] = inspect_tasks(run)
+        from .failures import inspect_attempts
+        output["attempts"] = inspect_attempts(run)
+        from .core import local_path
+        output["attempt_locks"] = [{"path": p.relative_to(run).as_posix(), "owner": read_json(local_path(run, str(p)))}
+                                   for p in sorted(run.glob(".attempt-*.lock"))]
+        output["reconcile_required"] = any(e.get("operation") and not e.get("reconciled") and
+                    (e["status"] == "UNKNOWN_STATE" or e.get("failure", {}).get("class") == "unknown_state")
+                    for e in output["attempts"])
+        if (run / "submission_intent.json").is_file() and not (run / "submission_result.json").is_file():
+            output["reconcile_required"] = True
+        if output["attempt_locks"]:
+            output["reconcile_required"] = True
         output["status"] = "STALLED" if any(t["status"] == "STALLED" for t in output["tasks"]) else output["task"]["status"]
+        if output["reconcile_required"]:
+            output["status"] = "UNKNOWN_STATE"
         for name in ("netlist_result", "simulation_result", "analysis_result"):
             path = run / f"{name}.json"
             if path.is_file():
@@ -325,6 +344,8 @@ def main() -> int:
                 run_config(args.run).get("workflow", {}).get("return_mode") != "full"):
             output = {k: v for k, v in output.items() if k != "data"}
     print(json.dumps(output, ensure_ascii=False, indent=2))
+    if args.command == "recover" and (output.get("reconcile_required") or output.get("status") == "STALLED"):
+        return 1
     if args.command == "layout" and args.layout_command == "floorplan-diff" and not output["empty"]:
         return 1
     if args.command == "layout" and args.layout_command == "floorplan-freeze" and output.get("status") != "FLOORPLAN_FROZEN":

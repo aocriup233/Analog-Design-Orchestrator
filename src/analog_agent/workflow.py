@@ -149,6 +149,19 @@ def decide_run(run: Path, decision: str, reason: str,
 
 
 def invoke_role(role: str, run: Path) -> dict:
+    try:
+        return _invoke_role(role, run)
+    except BaseException as error:
+        from .failures import record_failure
+        if Path(run).is_dir() and (Path(run) / "task.json").is_file():
+            try:
+                record_failure(run, "role_" + role, error)
+            except (OSError, ValueError):
+                pass
+        raise
+
+
+def _invoke_role(role: str, run: Path) -> dict:
     """Each role runs in a separate Python process; JSON files are its contract."""
     from .input_gate import verify_inputs
     verify_inputs(role, run)

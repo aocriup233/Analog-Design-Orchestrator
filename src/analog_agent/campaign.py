@@ -426,6 +426,8 @@ def _dispatch(campaign: Path, points: list[dict], max_workers: int) -> list[tupl
             try:
                 results.append((point, future.result()))
             except Exception as exc:
+                from .failures import classify
+                point["failure"] = classify(exc)
                 results.append((point, f"{type(exc).__name__}: {exc}"))
                 point["error"] = f"{type(exc).__name__}: {exc}"
     return results
@@ -724,6 +726,7 @@ def retry(campaign: Path, point_id: str) -> dict:
         if run:
             run_config(run)
         point["error"] = None
+        point.pop("failure", None)
         manifest["status"] = cycle["status"] = "ACTIVE"
         _save(campaign, manifest)
     return inspect_campaign(campaign)

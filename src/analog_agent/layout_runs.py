@@ -57,7 +57,8 @@ def layout_lock(run: Path):
     try:
         stream = path.open("x", encoding="utf-8")
     except FileExistsError as exc:
-        raise ValueError("Layout run is locked; reconcile the owning process before retry") from exc
+        from .failures import UnknownStateError
+        raise UnknownStateError("Layout run is locked; reconcile the owning process before retry") from exc
     try:
         with stream:
             json.dump({"pid": os.getpid(), "host": socket.gethostname(),

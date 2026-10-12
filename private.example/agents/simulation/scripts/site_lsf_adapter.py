@@ -4,6 +4,10 @@ Copy into a user's private project, implement each method with reusable local
 functions, then configure simulation.backend="lsf" and
 simulation.adapter="private/agents/simulation/scripts/site_lsf_adapter.py:create".
 No passwords should appear in config, argv, returned dicts, or run artifacts.
+S3 supplies _attempt_dir, _run_dir and _run_id in runtime config. New output
+must use the exclusive attempt directory, never overwrite retained evidence.
+Raise failures.RetryableError(code, no_side_effects=True) only when the call
+has finished and no job or uncertain mutation exists. Otherwise reconcile.
 """
 
 
@@ -33,7 +37,12 @@ class SiteLSFAdapter:
         raise NotImplementedError
 
     def retrieve(self, run, config, submitted):
-        """Download outputs below run; list path, sha256, remote_sha256."""
+        """Download below run (the exclusive ATTEMPT OUTPUT directory in S3).
+
+        Use config['_run_id'] or submitted job metadata for remote identity;
+        this argument's basename is NOT the original run ID. Relative artifact
+        paths resolve against this directory. List sha256 and remote_sha256.
+        """
         raise NotImplementedError
 
     def verify(self, run, config, submitted, retrieved):
