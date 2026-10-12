@@ -9,6 +9,7 @@ from .core import local_path, read_json, sha256, update_status, utc_now, write_j
 from .layout_constraints import frozen_constraints, digest, _pinned
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
 from .state import status
+from .input_gate import checked_stage
 
 
 def check_placement(floorplan, document):
@@ -115,6 +116,7 @@ def publish_check_snapshot(run, report):
     return {"path": path.relative_to(run).as_posix(), "sha256": sha256(path)}
 
 
+@checked_stage("layout_constraints_check")
 def floorplan_constraints_check(run: Path, *, session=None):
     run = layout_path(run)
     if session is None:
@@ -152,6 +154,7 @@ def _routing_identity(run, checked):
             "warnings_sha256": digest(checked["warnings"])}
 
 
+@checked_stage("layout_routing_review")
 def routing_review(run: Path, decision: str, reason: str, *, session=None):
     """Human decision only; records authorization, never starts L3."""
     run = layout_path(run)

@@ -111,7 +111,7 @@ class LayoutPlacementCheckTest(LayoutFloorplanFixture):
         with self.assertRaises(ValueError):
             require_unchanged_floorplan(self.run, "routing")
         self.mock_reader.assert_not_called()
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_FROZEN")
 
     def test_tampered_constraint_receipt_and_unfrozen_gate(self):
         with self.assertRaises(ValueError):
@@ -121,4 +121,4 @@ class LayoutPlacementCheckTest(LayoutFloorplanFixture):
         write_json(self.run / ref["path"], {})
         with self.assertRaises(ValueError):
             floorplan_constraints_check(self.run)
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_FROZEN")

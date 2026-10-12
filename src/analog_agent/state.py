@@ -45,5 +45,7 @@ def transition(run: Path, new_status: str, **fields) -> dict:
     task.setdefault("history", [{"status": old, "at": task.get("created_at", now)}])
     task["history"].append({"status": new_status, "at": now})
     task.update(status=new_status, updated_at=now, **fields)
+    from .input_gate import pin_handoffs
+    pin_handoffs(run, task)
     write_json(task_path, task)
     return task

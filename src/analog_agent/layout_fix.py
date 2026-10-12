@@ -9,6 +9,7 @@ from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layou
 from .layout_routing import routing_context, validate_plan
 from .layout_worker import attention, publish, route, snapshot
 from .state import status, transition
+from .input_gate import checked_stage
 
 
 def _failure(run):
@@ -46,6 +47,7 @@ def prepare_fix(run, session):
         "affected_nets": sorted({net for v in report["violations"] for net in v["nets"]})})
 
 
+@checked_stage("layout_fix")
 def apply_fix(run):
     """Explicit operator action applies the reviewed proposal and re-verifies."""
     from .layout_verification import verify

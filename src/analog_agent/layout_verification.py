@@ -17,6 +17,7 @@ from .layout_routing import fields
 from .layout_worker import attention, publish, snapshot
 from .layout_lvs_source import prepare_source, check_source
 from .state import status, transition
+from .input_gate import checked_stage
 
 
 def parse_report(raw: bytes, *, stage, tool):
@@ -128,6 +129,7 @@ def _unchanged_export(run, export):
             raise LayoutEvidenceError("Immutable verification snapshot changed")
 
 
+@checked_stage("layout_verify")
 def verify(run: Path, *, session=None):
     run = layout_path(run)
     if session is None:

@@ -1,5 +1,11 @@
 # Layout L1/L2: configuration, constraints and manual floorplan
 
+S2 stage entry gates now reject pinned-input mismatches **without changing the
+current state**, before any Bridge call. This supersedes the older preflight
+tampering-to-NEEDS_ATTENTION behaviour below; failures discovered after execution
+starts retain the existing unknown-state/reconciliation boundaries. Reader and
+typed adapter processes share the [durable task monitor](task-safety.md).
+
 L4's optional [floorplan plugin contract](layout-floorplan-plugin.md) extends
 schema 2 with `source="plugin"` and required `plugin_sha256`. It only proposes
 JSON; no placement algorithm or mutation is implemented. Live Bridge exports
