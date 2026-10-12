@@ -123,7 +123,7 @@ def _inventory(root):
             for p in root.rglob("*")}
 
 
-def paths():
+def paths(*, require_symlinks=False):
     """Probe actual writers exclusively in disposable projects; never user hooks."""
     from .core import local_path, create_run, write_json
     from .campaign import create_campaign
@@ -183,6 +183,8 @@ def paths():
                     findings.append({"writer": writer, "attack": attack, "reason": "escape accepted"})
                 if _inventory(outside) != before:
                     findings.append({"writer": writer, "attack": attack, "reason": "outside tree changed"})
+    if require_symlinks and skipped:
+        findings.append({"reason": "mandatory symlink probes could not complete"})
     return result("paths", findings, status="FAIL" if findings else ("WARN" if skipped else "PASS"),
                   probes=count, skipped=skipped)
 
@@ -209,6 +211,25 @@ def _shingles(path):
                     words.pop(0)
 
 
+def _line_fingerprints(path):
+    """Domain-neutral exact line and identifier/numeric-combination digests."""
+    with path.open(encoding="utf-8", errors="replace") as stream:
+        for line, text in enumerate(stream, 1):
+            normalized = " ".join(text.casefold().split())
+            if not normalized or normalized.startswith(("#", "//", ";")):
+                continue
+            yield hashlib.sha256(("line:" + normalized).encode()).digest(), line
+            # Include every identifier/number pair on the same short line rather
+            # than guessing which identifier is a foundry layer or rule name.
+            # This catches a layer/value excerpt with the rule keyword omitted.
+            tokens = re.findall(r"(?<![\w.])[a-z_][a-z0-9_.-]*|(?<![\w.])[+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?(?:[a-z]+)?(?![\w.])", normalized)
+            identifiers = sorted({t for t in tokens if re.fullmatch(r"[a-z_][a-z0-9_.-]*", t)})
+            numbers = sorted({t for t in tokens if re.match(r"[+-.\d]", t)})
+            for identifier in identifiers:
+                for number in numbers:
+                    yield hashlib.sha256(("pair:" + identifier + " " + number).encode()).digest(), line
+
+
 def pdk(root):
     from .core import local_path
     source = local_path(root, "private/layout/config.json")
@@ -230,6 +251,7 @@ def pdk(root):
             rule_files.add(Path(options["runset"]))
     for path in sorted(rule_files):
         hashes.update(digest for digest, _ in _shingles(path))
+        hashes.update(digest for digest, _ in _line_fingerprints(path))
     # Conservative superset: every run/campaign/layout artifact (including nested
     # role contexts and plan inputs), every log anywhere, plus declared role inputs.
     targets = {p for p in _files(root) if p.relative_to(root).parts[0] in {"runs", "campaigns", "layouts", "logs", "private_logs"}
@@ -251,6 +273,9 @@ def pdk(root):
     findings = list(coverage)
     for path in sorted(targets - rule_files):
         for digest, line in _shingles(path):
+            if digest in hashes:
+                findings.append({"file": str(path.relative_to(root)), "line": line})
+        for digest, line in _line_fingerprints(path):
             if digest in hashes:
                 findings.append({"file": str(path.relative_to(root)), "line": line})
     return result("pdk", [dict(item) for item in {json.dumps(f, sort_keys=True): f for f in findings}.values()],
@@ -312,9 +337,21 @@ def _is_lock(path):
 
 def permissions(root, repo):
     findings = []
+    warnings = []
     private = root / "private"
-    if private.exists() and private.resolve().is_relative_to(repo.resolve()):
-        findings.append({"file": str(private), "reason": "private config tree inside ADO repository"})
+    # Index evidence, not directory location: even an ignored/deleted file can
+    # remain tracked. Query from the user project to support independent repos.
+    git = _command(["git", "-C", str(root), "rev-parse", "--show-toplevel"])
+    if git.returncode == 0:
+        indexed = _command(["git", "-C", str(root), "ls-files", "-z", "--", "private"])
+        if indexed.returncode:
+            raise ValueError("Private tracked-file inventory unavailable")
+        for name in indexed.stdout.split(b"\0"):
+            if name:
+                findings.append({"file": os.fsdecode(name), "reason": "private file is Git-tracked"})
+        if private.exists() and not indexed.stdout:
+            ignored = _command(["git", "-C", str(root), "check-ignore", "-q", "--", "private/"])
+            warnings.append({"file": "private/", "reason": "ignored private tree; not published" if ignored.returncode == 0 else "untracked private tree; ensure .gitignore coverage"})
     for path in _files(root):
         parts = path.relative_to(root).parts
         log = "private_logs" in parts or ("execution" in parts and path.name == "stderr.log")
@@ -326,7 +363,7 @@ def permissions(root, repo):
             findings.append({"file": str(path.relative_to(root)), "reason": "private log not 0600 or equivalent restricted ACL"})
         if not owner_ok:
             findings.append({"file": str(path.relative_to(root)), "reason": "lock owner is not current user"})
-    return result("permissions", findings)
+    return result("permissions", findings, status="FAIL" if findings else ("WARN" if warnings else "PASS"), warnings=warnings)
 
 
 def processes():
@@ -384,11 +421,11 @@ def stale(root):
     return result("stale", findings, status="WARN" if findings or orphans else "PASS", orphan_processes=orphans, cleaned=False)
 
 
-def diagnose(root=None, repo=None):
+def diagnose(root=None, repo=None, *, require_symlinks=False):
     root = Path(root or Path.cwd()).resolve()
     repo = Path(repo or Path(__file__).resolve().parents[2]).resolve()
     checks = []
-    for name, check in (("secrets", lambda: secrets(repo)), ("allowlists", allowlists), ("paths", paths),
+    for name, check in (("secrets", lambda: secrets(repo)), ("allowlists", allowlists), ("paths", lambda: paths(require_symlinks=require_symlinks)),
                         ("pdk", lambda: pdk(root)), ("dependencies", lambda: dependencies(repo)),
                         ("permissions", lambda: permissions(root, repo)), ("stale", lambda: stale(root))):
         try:

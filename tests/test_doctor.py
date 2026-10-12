@@ -226,7 +226,43 @@ class DoctorTests(unittest.TestCase):
 
     def test_private_configuration_in_repo_fails(self):
         (self.repo / "private").mkdir()
+        (self.repo / "private/config.json").write_text("{}")
+        subprocess.run(["git", "-C", str(self.repo), "add", "-f", "private/config.json"], check=True, capture_output=True)
         self.assertEqual(doctor.permissions(self.repo, self.repo)["status"], "FAIL")
+
+    def test_ignored_private_tree_only_warns(self):
+        (self.repo / "private").mkdir()
+        (self.repo / "private/config.json").write_text("{}")
+        self.assertEqual(doctor.permissions(self.repo, self.repo)["status"], "WARN")
+
+    def test_tracked_private_remains_fail_even_deleted(self):
+        self.test_private_configuration_in_repo_fails()
+        (self.repo / "private/config.json").unlink()
+        self.assertEqual(doctor.permissions(self.repo, self.repo)["status"], "FAIL")
+
+    def test_short_rule_lines_and_pairs_redacted(self):
+        self.rules()
+        (self.base / "rules/deck").write_text("Metal7  WIDTH  0.031\n")
+        for text in ("metal7 width 0.031", "METAL7\t0.031"):
+            (self.root / "short.log").write_text(text)
+            report = doctor.pdk(self.root)
+            self.assertEqual(report["status"], "FAIL")
+            self.assertNotIn("metal7", json.dumps(report).lower())
+            self.assertTrue(all(set(f) == {"file", "line"} for f in report["findings"]))
+        (self.root / "short.log").write_text("Metal8 0.032")
+        self.assertEqual(doctor.pdk(self.root)["status"], "PASS")
+
+    def test_mandatory_symlinks_fail_on_skip(self):
+        with patch("pathlib.Path.symlink_to", side_effect=OSError("unavailable")):
+            self.assertEqual(doctor.paths(require_symlinks=True)["status"], "FAIL")
+            self.assertEqual(doctor.paths()["status"], "WARN")
+
+    @unittest.skipIf(os.name == "nt", "mandatory Linux symlink gate")
+    def test_linux_mandatory_all_fifteen_probes(self):
+        report = doctor.paths(require_symlinks=True)
+        self.assertEqual(report["status"], "PASS", report)
+        self.assertEqual(report["probes"], 15)
+        self.assertEqual(report["skipped"], [])
 
     def test_private_user_project_allowed(self):
         (self.root / "private").mkdir()

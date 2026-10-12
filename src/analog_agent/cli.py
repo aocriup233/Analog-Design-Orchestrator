@@ -33,6 +33,7 @@ def main() -> int:
     sub = parser.add_subparsers(dest="command", required=True)
     doctor = sub.add_parser("doctor", help="Read-only deterministic safety report (never cleans or submits)")
     doctor.add_argument("--json", action="store_true", help="Print the structured report")
+    doctor.add_argument("--require-symlinks", action="store_true", help="FAIL if any symlink probe is skipped (Linux CI gate)")
     new = sub.add_parser("new", help="Create a run and prepare its netlist")
     new.add_argument("config", type=Path)
     new.add_argument("--iteration", type=int, default=0)
@@ -142,7 +143,7 @@ def main() -> int:
         import sys
         sys.dont_write_bytecode = True
         from .doctor import diagnose
-        report = diagnose()
+        report = diagnose(require_symlinks=args.require_symlinks)
         if args.json:
             print(json.dumps(report, ensure_ascii=False, indent=2))
         else:
@@ -152,7 +153,7 @@ def main() -> int:
                     print("  " + check.get("scope", check.get("reason", "")))
                 for item in check["findings"]:
                     print("  " + json.dumps(item, ensure_ascii=False, sort_keys=True))
-                for item in check.get("limitations", []) + check.get("skipped", []):
+                for item in check.get("limitations", []) + check.get("skipped", []) + check.get("warnings", []):
                     print("  " + json.dumps(item, ensure_ascii=False, sort_keys=True))
                 for item in check.get("orphan_processes", []):
                     print("  orphan " + json.dumps(item, sort_keys=True))
