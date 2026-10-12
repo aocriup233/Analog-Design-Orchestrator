@@ -1,0 +1,3 @@
+# Core runtime has zero third-party dependencies (pyproject.toml dependencies=[]).
+# Intentionally empty hash lock: pip --dry-run --require-hashes -r requirements.lock.
+# Optional analysis/bo/bridge extras require separate deployment-specific locks.
