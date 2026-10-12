@@ -202,7 +202,7 @@ def create_campaign(config_path: Path) -> Path:
     cfg = load_config(config_path)
     root = Path(cfg["_project_root"])
     identifier = f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}"
-    campaign = root / "campaigns" / identifier
+    campaign = local_path(local_path(root, "campaigns"), identifier)
     campaign.mkdir(parents=True, exist_ok=False)
     if cfg.get("memory"):
         write_json(campaign / "memory_initial.json", retrieve_memory(cfg))

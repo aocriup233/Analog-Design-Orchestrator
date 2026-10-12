@@ -225,7 +225,8 @@ def create_run(config_path: Path, iteration: int, overrides: dict[str, str] | No
     root = Path(runtime["_project_root"])
     if testbench is not None and testbench not in runtime.get("netlist", {}).get("testbenches", {}):
         raise ValueError(f"Unknown testbench: {testbench}")
-    run = root / "runs" / f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}"
+    runs = local_path(root, "runs")
+    run = local_path(runs, f"{datetime.now(timezone.utc):%Y%m%dT%H%M%SZ}_{uuid.uuid4().hex[:8]}")
     run.mkdir(parents=True, exist_ok=False)
     public = read_json(config_path)
     public["_project_root"] = str(root)

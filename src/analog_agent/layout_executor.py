@@ -23,9 +23,15 @@ OPERATIONS = frozenset({"read_layout_snapshot", "read_terminals", "append_path",
                         "generate_lvs_source", "normalize_lvs_source", "generate_floorplan"})
 
 
-def configured(run, operation):
+def validate_operation(operation):
+    """Validate before inspecting a run or granting any adapter capability."""
     if operation not in OPERATIONS:
         raise ValueError("Operation is not in the L0 typed allowlist")
+    return operation
+
+
+def configured(run, operation):
+    validate_operation(operation)
     cfg, project = layout_context(run)
     if operation == "generate_floorplan":
         if cfg.get("floorplan", {}).get("mode", "manual") != "plugin":

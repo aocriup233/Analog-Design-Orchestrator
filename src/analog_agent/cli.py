@@ -31,6 +31,8 @@ from .workflow import cleanup, decide_run, invoke_role, role_obligation, run_aut
 def main() -> int:
     parser = argparse.ArgumentParser(prog="analog-agent")
     sub = parser.add_subparsers(dest="command", required=True)
+    doctor = sub.add_parser("doctor", help="Read-only deterministic safety report (never cleans or submits)")
+    doctor.add_argument("--json", action="store_true", help="Print the structured report")
     new = sub.add_parser("new", help="Create a run and prepare its netlist")
     new.add_argument("config", type=Path)
     new.add_argument("--iteration", type=int, default=0)
@@ -136,6 +138,25 @@ def main() -> int:
     worker.add_argument("role", choices=["netlist", "simulation", "analysis"])
     worker.add_argument("run", type=Path)
     args = parser.parse_args()
+    if args.command == "doctor":
+        import sys
+        sys.dont_write_bytecode = True
+        from .doctor import diagnose
+        report = diagnose()
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            for check in report["checks"]:
+                print(f'{check["status"]}: {check["check"]}')
+                if check.get("scope") or check.get("reason"):
+                    print("  " + check.get("scope", check.get("reason", "")))
+                for item in check["findings"]:
+                    print("  " + json.dumps(item, ensure_ascii=False, sort_keys=True))
+                for item in check.get("limitations", []) + check.get("skipped", []):
+                    print("  " + json.dumps(item, ensure_ascii=False, sort_keys=True))
+                for item in check.get("orphan_processes", []):
+                    print("  orphan " + json.dumps(item, sort_keys=True))
+        return int(report["status"] == "FAIL")
     if args.command == "new":
         overrides = dict(item.split("=", 1) for item in args.set)
         overrides = validate_values(overrides, load_config(args.config).get("parameters", {}))

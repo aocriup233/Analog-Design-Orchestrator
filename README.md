@@ -133,6 +133,11 @@ For any backend, choose `simulation.rules` (for example the public [DC](agents/s
 
 ## Operate a run
 
+`analog-agent doctor [--json]` prints a read-only deterministic safety report
+and exits non-zero on any FAIL. It never starts an LLM, simulator or Bridge,
+installs dependencies, retries tasks or cleans locks/processes. See
+[check coverage, offline dependency scope and deployment limits](docs/doctor.md).
+
 ```sh
 analog-agent new project.json --iteration 0 --set R=2k
 analog-agent submit RUN_DIR
