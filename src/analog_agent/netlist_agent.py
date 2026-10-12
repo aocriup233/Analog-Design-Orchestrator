@@ -11,6 +11,7 @@ from .core import local_path, read_json, run_config, sha256, utc_now, write_json
 from .plugins import load_function
 from .state import transition
 from .parameters import validate_values
+from .input_gate import checked_stage
 
 
 def _render(source: Path, values: dict[str, str], definitions: dict | None = None) -> str:
@@ -131,6 +132,7 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
                           "source_sha256": sha256(bench_source)}}
 
 
+@checked_stage("netlist")
 def prepare(run: Path) -> dict:
     run = run.resolve()
     from .input_gate import verify_inputs

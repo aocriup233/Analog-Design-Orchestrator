@@ -16,8 +16,18 @@ def checked_stage(stage):
     def decorate(function):
         @wraps(function)
         def checked(run, *args, **kwargs):
-            verify_inputs(stage, run)
-            return function(run, *args, **kwargs)
+            try:
+                verify_inputs(stage, run)
+                return function(run, *args, **kwargs)
+            except BaseException as error:
+                from .failures import record_failure
+                # Never manufacture a run or lose the primary error if recording fails.
+                if Path(run).is_dir() and (Path(run) / "task.json").is_file():
+                    try:
+                        record_failure(run, stage, error)
+                    except (OSError, ValueError):
+                        pass
+                raise
         return checked
     return decorate
 

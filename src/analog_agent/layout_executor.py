@@ -54,6 +54,14 @@ def call_adapter(run, request):
 
 
 def execute(run, operation, payload):
+    run = layout_path(run)
+    cfg, project, _ = configured(run, operation)
+    from .failures import execute_operation
+    return execute_operation(run, "layout_op_" + operation, project,
+                             lambda _: _execute(run, operation, payload))
+
+
+def _execute(run, operation, payload):
     """Bound subprocess lifetime; retain exclusive result/private diagnostics."""
     run = layout_path(run)
     cfg, project, _ = configured(run, operation)  # Reject missing adapters before spawning.
@@ -97,6 +105,11 @@ def execute(run, operation, payload):
         raise ReaderStateError("Adapter result is absent or malformed; reconcile") from exc
     if process.returncode == 0 and envelope == {"status": "unsupported"}:
         raise ValueError("Typed adapter operation is not implemented; no raw fallback")
+    if process.returncode == 0 and isinstance(envelope, dict) and set(envelope) == {"status", "code", "no_side_effects"} and envelope["status"] == "retryable":
+        from .failures import RetryableError
+        if type(envelope["no_side_effects"]) is not bool:
+            raise ReaderStateError("Invalid typed retry attestation; reconcile")
+        raise RetryableError(envelope["code"], no_side_effects=envelope["no_side_effects"])
     if process.returncode or not isinstance(envelope, dict) or envelope.get("status") != "ok" or set(envelope) != {"status", "result"}:
         raise ReaderStateError(f"Typed adapter failed; reconcile; diagnostics: {log.relative_to(run).as_posix()}")
     return envelope["result"]
@@ -115,9 +128,11 @@ def main():
         except NotImplementedError:
             traceback.print_exc(file=sys.stderr)
             envelope = {"status": "unsupported"}
-        except Exception:
+        except Exception as error:
+            from .failures import RetryableError
             traceback.print_exc(file=sys.stderr)
-            envelope = {"status": "crash"}
+            envelope = ({"status": "retryable", "code": error.code, "no_side_effects": error.no_side_effects}
+                        if isinstance(error, RetryableError) else {"status": "crash"})
         json.dump(envelope, channel, allow_nan=False)
         channel.flush()
         os.fsync(channel.fileno())

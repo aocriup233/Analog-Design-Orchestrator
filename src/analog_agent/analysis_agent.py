@@ -9,6 +9,7 @@ from pathlib import Path
 from .core import read_json, run_config, utc_now, write_json
 from .plugins import load_function
 from .state import status, transition
+from .input_gate import checked_stage
 
 
 def _magnitude(value):
@@ -56,6 +57,7 @@ def extract(data: dict, definition: dict, run: Path | None = None, project_root:
     raise ValueError(f"Unsupported metric kind: {kind}")
 
 
+@checked_stage("analysis")
 def analyze(run: Path) -> dict:
     run = run.resolve()
     from .input_gate import verify_inputs

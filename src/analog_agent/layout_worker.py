@@ -18,6 +18,7 @@ from .input_gate import checked_stage
 def attention(run, kind="ExecutionUncertain"):
     if status(run) not in {"NEEDS_ATTENTION", "FLOORPLAN_PENDING"}:
         transition(run, "NEEDS_ATTENTION", error={"kind": kind,
+                   "class": "needs_human" if kind in {"LayoutEvidenceError", "ValueError", "TypeError", "NotImplementedError"} else "unknown_state",
                    "message": "Layout execution/evidence is uncertain; reconcile before any retry"})
 
 

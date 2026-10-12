@@ -97,6 +97,8 @@ def _apply_private(cfg: dict[str, Any], expected: dict[str, str] | None = None) 
 
 
 def _validate_config(cfg: dict[str, Any]) -> None:
+    from .failures import options as retry_options
+    retry_options(cfg)
     from .task_monitor import options as monitor_options
     monitor_options(cfg)
     root = Path(cfg["_project_root"])

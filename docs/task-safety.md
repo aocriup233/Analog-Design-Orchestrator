@@ -97,10 +97,11 @@ local reader does not cancel a remote CIW operation. Local simulator internals a
 opaque to ADO: only the runner's enclosing call is observed unless the deployment
 exposes an actual simulator PID/progress token. No orphan-cleanup claim is made.
 
+S3 adds [classified failure attempts and explicit recovery](failure-recovery.md).
 Explicit successful reconciliation retires stalled simulation monitors as
 `RECONCILED` and starts a monitor for the adopted job; old evidence remains. No
-timeout or stalled status invokes reconcile automatically. Retry classification,
-backoff and attempt-directory rollback belong to S3, not this stage.
+timeout or stalled status invokes reconcile automatically. Retryable failures
+use bounded attempts only at the documented S3 safe boundaries.
 
 ## Tests
 
