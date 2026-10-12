@@ -14,6 +14,7 @@ from .layout_floorplan import _frozen, require_unchanged_floorplan
 from .layout_runs import layout_context, layout_lock, layout_path
 from .parameters import number_value, validate_value
 from .state import status
+from .input_gate import checked_stage
 
 
 def fields(value, required, optional=()):
@@ -195,6 +196,7 @@ def routing_context(run, session, *, fix=None):
         "violation_ids": violations, "violations": _pinned(run, fix)["violations"] if fix else []}
 
 
+@checked_stage("layout_routing_proposal")
 def propose_routing(run: Path, *, fix=False):
     """Invoke only the trusted routing role; validate and pin JSON, never route."""
     from .workflow import invoke_json_role

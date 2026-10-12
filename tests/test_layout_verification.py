@@ -129,7 +129,7 @@ class LayoutVerificationTest(VerificationFixture):
         with patch("analog_agent.layout_verification.execute") as tool, self.assertRaises(ValueError):
             verify(self.run)
         tool.assert_not_called()
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "ROUTED")
 
     def test_same_snapshot_clean_drc_lvs_gate(self):
         with patch("analog_agent.layout_verification.execute", side_effect=self.dispatch), \

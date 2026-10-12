@@ -58,6 +58,8 @@ class LayoutBridgeSecurityTest(LayoutRunsFixture):
         with patch("analog_agent.layout_bridge.subprocess.Popen") as factory, \
                 patch("analog_agent.layout_bridge._kill_reader"):
             factory.return_value.communicate.side_effect = subprocess.TimeoutExpired("reader", 1)
+            factory.return_value.pid = 12345
+            factory.return_value.poll.return_value = None
             with self.assertRaises(TimeoutError) as raised:
                 read_placement(run, 1)
         self.assertEqual(factory.return_value.communicate.call_count, 2)

@@ -588,7 +588,19 @@ def inspect_campaign(campaign: Path) -> dict:
                         issue = "Analysis report missing"
                 except Exception as exc:
                     issue = f"{type(exc).__name__}: {exc}"
+            monitor_status = None
+            if point["run"]:
+                from .task_monitor import inspect_tasks
+                try:
+                    tasks = inspect_tasks(_run_path(campaign, point["run"]))
+                    if any(t["status"] == "STALLED" for t in tasks):
+                        monitor_status = "STALLED"
+                        issue = issue or "Task stalled; inspect heartbeat/progress and reconcile, never resubmit automatically"
+                except (OSError, ValueError):
+                    monitor_status = "STALLED"
+                    issue = issue or "Task monitor evidence unavailable; inspect and reconcile"
             points.append({"id": point["id"], "run": point["run"], "state": state,
+                           "monitor_status": monitor_status,
                            "issue": issue, "parameters": point["parameters"]})
         counts = {state: sum(point["state"] == state for point in points)
                   for state in sorted({point["state"] for point in points})}

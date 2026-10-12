@@ -68,6 +68,7 @@ def _diagnosed(error: Exception, relative: str):
 
 def read_placement(run: Path, timeout_s: float) -> dict:
     run = layout_path(run)
+    _, project = layout_context(run)
     options = {"start_new_session": True} if os.name != "nt" else {
         "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP}
     token = uuid.uuid4().hex
@@ -89,7 +90,11 @@ def read_placement(run: Path, timeout_s: float) -> dict:
         process = subprocess.Popen(command, cwd=empty_cwd, env=env,
                                    stdout=subprocess.DEVNULL, stderr=diagnostics, text=True, **options)
         try:
-            process.communicate(timeout=timeout_s)
+            from .task_monitor import TaskMonitor
+            policy = {**project.get("monitor", {}), "timeout_s": min(timeout_s, project.get("monitor", {}).get("timeout_s", 3600))}
+            monitor = TaskMonitor.start(run, "placement_reader", {"monitor": policy})
+            with monitor.watch_process(process, progress_paths=(log, result)):
+                process.communicate(timeout=policy["timeout_s"])
         except subprocess.TimeoutExpired as exc:
             try:
                 _kill_reader(process)

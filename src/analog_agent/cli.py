@@ -49,6 +49,11 @@ def main() -> int:
     auto.add_argument("config", type=Path)
     status = sub.add_parser("status")
     status.add_argument("run", type=Path)
+    inspect = sub.add_parser("inspect")
+    inspect.add_argument("run", type=Path)
+    monitor = sub.add_parser("monitor")
+    monitor.add_argument("run", type=Path)
+    monitor.add_argument("--max-seconds", type=float, default=60)
     duty = sub.add_parser("duty", help="Show the role still responsible for a run")
     duty.add_argument("run", type=Path)
     decision = sub.add_parser("decide-run", help="Route a reviewed run to its next role")
@@ -190,10 +195,18 @@ def main() -> int:
             cleanup(run)
     elif args.command == "run":
         output = run_auto(args.config)
-    elif args.command == "status":
+    elif args.command == "monitor":
+        from .task_monitor import watch_tasks
+        output = watch_tasks(args.run, max_seconds=args.max_seconds)
+    elif args.command in {"status", "inspect"}:
         run = args.run.resolve()
-        output = {"task": read_json(run / "task.json"),
-                  "obligation": role_obligation(run)}
+        task = read_json(run / "task.json")
+        output = {"task": task}
+        if task.get("kind") != "layout":
+            output["obligation"] = role_obligation(run)
+        from .task_monitor import inspect_tasks
+        output["tasks"] = inspect_tasks(run)
+        output["status"] = "STALLED" if any(t["status"] == "STALLED" for t in output["tasks"]) else output["task"]["status"]
         for name in ("netlist_result", "simulation_result", "analysis_result"):
             path = run / f"{name}.json"
             if path.is_file():
@@ -259,6 +272,9 @@ def main() -> int:
             run = layout_path(args.run)
             layout_context(run)
             output = {"task": read_json(run / "task.json")}
+            from .task_monitor import inspect_tasks
+            output["tasks"] = inspect_tasks(run)
+            output["status"] = "STALLED" if any(t["status"] == "STALLED" for t in output["tasks"]) else output["task"]["status"]
         elif args.layout_command == "floorplan-export":
             output = floorplan_export(args.run)
         elif args.layout_command == "floorplan-generate":

@@ -12,6 +12,7 @@ from .layout_floorplan import _attention, _publish, instance_identifier, validat
 from .layout_floorplan_rules import RULES_PATH, validate_rules
 from .layout_floorplan_consistency import check_consistency
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
+from .input_gate import checked_stage
 from .layout_worker import publish
 from .state import status
 
@@ -70,6 +71,7 @@ def _references(rules, floorplan, constraints, leading):
         raise ValueError("Orphan floorplan rule references: " + ", ".join(sorted(missing)))
 
 
+@checked_stage("layout_generate")
 def floorplan_generate(run: Path, *, placement: Path | None = None):
     run = layout_path(run)
     with layout_lock(run) as session:

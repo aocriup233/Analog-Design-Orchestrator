@@ -150,6 +150,8 @@ def decide_run(run: Path, decision: str, reason: str,
 
 def invoke_role(role: str, run: Path) -> dict:
     """Each role runs in a separate Python process; JSON files are its contract."""
+    from .input_gate import verify_inputs
+    verify_inputs(role, run)
     cfg = run_config(run)
     configured = cfg.get("workflow", {}).get("role_commands", {}).get(role)
     timeout = float(cfg.get("workflow", {}).get("role_timeout_s", 3600))
@@ -161,10 +163,11 @@ def invoke_role(role: str, run: Path) -> dict:
         command = [part.replace("{run}", str(run)) for part in configured]
     else:
         command = [sys.executable, "-m", "analog_agent.cli", "worker", role, str(run)]
-    completed = subprocess.run(
-        command,
-        capture_output=True, text=True, timeout=timeout,
-    )
+    from .task_monitor import TaskMonitor
+    monitor = TaskMonitor.start(run, "role_" + role, cfg)
+    completed = monitor.call(lambda: subprocess.run(
+        command, capture_output=True, text=True, timeout=timeout))
+    monitor.record("DONE" if completed.returncode == 0 else "FAILED", progress=completed.returncode)
     if completed.returncode:
         raise RuntimeError(
             f"{role} worker failed (exit {completed.returncode}):\n"

@@ -56,7 +56,7 @@ def call_adapter(run, request):
 def execute(run, operation, payload):
     """Bound subprocess lifetime; retain exclusive result/private diagnostics."""
     run = layout_path(run)
-    cfg, _, _ = configured(run, operation)  # Reject missing adapters before spawning.
+    cfg, project, _ = configured(run, operation)  # Reject missing adapters before spawning.
     timeout = number_value(str(cfg.get("timeout_s", 300)))
     token = uuid.uuid4().hex
     directory = local_path(run, f"execution/{token}")
@@ -72,7 +72,11 @@ def execute(run, operation, payload):
     with tempfile.TemporaryDirectory(prefix="ado-layout-") as empty, _private_file(log) as diagnostics:
         process = subprocess.Popen(command, cwd=empty, env=env, stdout=subprocess.DEVNULL, stderr=diagnostics, **options)
         try:
-            process.communicate(timeout=timeout)
+            from .task_monitor import TaskMonitor
+            policy = {**project.get("monitor", {}), "timeout_s": min(timeout, project.get("monitor", {}).get("timeout_s", 3600))}
+            monitor = TaskMonitor.start(run, "layout_" + operation, {"monitor": policy})
+            with monitor.watch_process(process, progress_paths=(log, result)):
+                process.communicate(timeout=policy["timeout_s"])
         except subprocess.TimeoutExpired as exc:
             try:
                 _kill_reader(process)

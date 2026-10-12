@@ -14,6 +14,7 @@ from . import layout_bridge
 from .core import local_path, read_json, sha256, update_status, utc_now, write_json
 from .layout_config import identifier
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
+from .input_gate import checked_stage
 from .parameters import number_value, validate_value
 from .state import status, transition
 
@@ -253,6 +254,7 @@ def _attention(run: Path, exc: Exception) -> None:
         transition(run, "NEEDS_ATTENTION", error=error)
 
 
+@checked_stage("layout_export")
 def floorplan_export(run: Path) -> dict:
     run = layout_path(run)
     with layout_lock(run) as session:
@@ -280,6 +282,7 @@ def _floorplan_export_locked(run: Path, session) -> dict:
         raise
 
 
+@checked_stage("layout_freeze")
 def floorplan_freeze(run: Path, reason: str) -> dict:
     run = layout_path(run)
     if not isinstance(reason, str) or not reason.strip():
@@ -343,6 +346,7 @@ def floorplan_freeze(run: Path, reason: str) -> dict:
             raise
 
 
+@checked_stage("layout_floorplan_checkpoint")
 def require_unchanged_floorplan(run: Path, checkpoint: str, *, session=None) -> dict:
     """Mandatory future routing/verification preflight, not an execution command."""
     if checkpoint not in {"routing", "verification"}:

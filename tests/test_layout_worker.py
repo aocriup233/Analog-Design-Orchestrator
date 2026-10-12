@@ -76,6 +76,8 @@ class LayoutWorkerTest(LayoutWorkerFixture):
         with patch("analog_agent.layout_executor.subprocess.Popen") as factory, \
              patch("analog_agent.layout_executor._kill_reader") as kill:
             process = factory.return_value
+            process.pid = 12345
+            process.poll.return_value = None
             process.communicate.side_effect = subprocess.TimeoutExpired("fixture", 1)
             with self.assertRaises(TimeoutError):
                 execute(self.run, "read_layout_snapshot", {})

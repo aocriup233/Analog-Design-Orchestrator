@@ -166,12 +166,16 @@ def prepare_layout(schematic: Path, *, allow_failing_design: bool = False, reaso
         raise ValueError("Expected a schematic runs/RUN directory")
     source, _, net = _schematic(root, schematic.name)
     gate = _spec_gate(source, allow_failing_design, reason)
-    _, manifest = load_layout_config(root)
+    layout_cfg, manifest = load_layout_config(root)
+    from .layout_config import stream_sha256
+    runsets = {stage: {"path": section["runset"], "sha256": stream_sha256(Path(section["runset"]))}
+               for stage in ("drc", "lvs") if "runset" in (section := layout_cfg[stage])}
     link = {"run_id": source.name, "netlist_sha256": net["netlist_sha256"],
             "netlist_result_sha256": sha256(local_path(source, "netlist_result.json")),
             "simulation_result_sha256": sha256(local_path(source, "simulation_result.json")),
             "config_sha256": sha256(local_path(source, "config.json"))}
-    return _atomic_run(root, {"schematic": link, "private_sha256": manifest, "spec_gate": gate})
+    return _atomic_run(root, {"schematic": link, "private_sha256": manifest, "spec_gate": gate,
+                              "verification_runsets": runsets})
 
 
 def _layout_context(run: Path) -> tuple[dict, dict]:

@@ -13,6 +13,7 @@ from .core import local_path, read_json, sha256, update_status, utc_now, write_j
 from .layout_config import identifier
 from .layout_floorplan import instance_identifier
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
+from .input_gate import checked_stage
 from .parameters import number_value, validate_value
 from .state import status, transition
 
@@ -339,6 +340,7 @@ def _inputs(run):
                  "coverage": graph["coverage"], "overrides": overrides}
 
 
+@checked_stage("layout_constraints")
 def constraints_draft(run: Path):
     run = layout_path(run)
     with layout_lock(run):
@@ -376,6 +378,7 @@ def _constraint_attention(run, exc):
                    "message": "Constraint evidence changed; inspect linked inputs before continuing"})
 
 
+@checked_stage("layout_constraints_freeze")
 def constraints_freeze(run: Path, reason: str, *, ack_warnings: bool = False):
     run = layout_path(run)
     if not isinstance(reason, str) or not reason.strip():

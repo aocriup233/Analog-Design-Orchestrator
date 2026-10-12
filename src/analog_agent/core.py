@@ -55,7 +55,11 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def sha256(path: Path) -> str:
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
 
 
 def local_path(root: Path, relative: str) -> Path:
@@ -93,6 +97,8 @@ def _apply_private(cfg: dict[str, Any], expected: dict[str, str] | None = None) 
 
 
 def _validate_config(cfg: dict[str, Any]) -> None:
+    from .task_monitor import options as monitor_options
+    monitor_options(cfg)
     root = Path(cfg["_project_root"])
     netlist = cfg.get("netlist", {})
     split = "block" in netlist or "testbenches" in netlist
@@ -236,10 +242,13 @@ def create_run(config_path: Path, iteration: int, overrides: dict[str, str] | No
     if runtime.get("memory"):
         from .memory import retrieve
         write_json(run / "memory_snapshot.json", retrieve(runtime))
+    from .input_gate import initial_inputs
+    pinned = initial_inputs(run, runtime)
     write_json(run / "task.json", {
         "run_id": run.name, "iteration": iteration,
         "overrides": overrides or {}, "testbench": testbench,
         "created_at": utc_now(), "status": "CREATED",
+        "pinned_inputs": pinned,
         "history": [{"status": "CREATED", "at": utc_now()}],
     })
     return run

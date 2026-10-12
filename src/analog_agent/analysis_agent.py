@@ -58,6 +58,8 @@ def extract(data: dict, definition: dict, run: Path | None = None, project_root:
 
 def analyze(run: Path) -> dict:
     run = run.resolve()
+    from .input_gate import verify_inputs
+    verify_inputs("analysis", run)
     cfg = run_config(run)
     sim = read_json(run / "simulation_result.json")
     if sim["status"] != "DONE":

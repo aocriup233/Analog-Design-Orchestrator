@@ -140,7 +140,7 @@ X0 (INP INN TAIL) stage
         write_json(self.run / "layout_constraints.draft.json", {})
         with self.assertRaises(ValueError):
             constraints_freeze(self.run, "reviewed")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "CONSTRAINTS_DRAFTED")
         other = prepare_layout(self.source)
         constraints_draft(other)
         result = constraints_freeze(other, "reviewed")

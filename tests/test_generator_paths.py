@@ -13,6 +13,7 @@ class GeneratorPathTest(unittest.TestCase):
             root = Path(directory)
             outside = root / "outside.scs"
             outside.write_text("subckt cell (a b)\nends cell\n")
+            (root / "generator.py").write_text("def run(*args): raise NotImplementedError\n")
             cfg = {"_project_root": str(root), "parameters": {},
                    "netlist": {"generator": "generator.py:run"},
                    "metrics": {"v": {}}, "rules": {"v": {}}}

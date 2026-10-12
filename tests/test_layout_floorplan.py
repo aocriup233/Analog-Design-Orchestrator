@@ -139,17 +139,17 @@ class LayoutFloorplanTest(LayoutFloorplanFixture):
     def test_frozen_receipt_tamper_detected(self):
         frozen = self.freeze()
         write_json(self.run / frozen["path"], {})
-        with self.assertRaisesRegex(ValueError, "receipt changed"):
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
             require_unchanged_floorplan(self.run, "routing")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_FROZEN")
 
     def test_export_tamper_is_not_a_reviewed_freeze(self):
         self.pending()
         floorplan_export(self.run)
         write_json(self.run / "floorplan.json", self.floorplan)
-        with self.assertRaisesRegex(ValueError, "current exported"):
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
             floorplan_freeze(self.run, "reviewed")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_PENDING")
 
     def test_strict_snapshot_validation(self):
         cfg, _ = layout_context(self.run)
@@ -199,9 +199,9 @@ class LayoutFloorplanTest(LayoutFloorplanFixture):
 
     def test_reader_changed_after_prepare_rejected(self):
         (self.root / "private/layout/reader.py").write_text("def read(context): return {'new': True}\n", encoding="utf-8")
-        with self.assertRaisesRegex(ValueError, "inputs changed"):
+        with self.assertRaisesRegex(ValueError, "hash mismatch"):
             floorplan_export(self.run)
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "LAYOUT_PREPARED")
 
     def test_cli_export_and_freeze(self):
         self.pending()

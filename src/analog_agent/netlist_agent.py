@@ -133,6 +133,8 @@ def _split_prepare(cfg: dict, task: dict, run: Path, values: dict[str, str]) -> 
 
 def prepare(run: Path) -> dict:
     run = run.resolve()
+    from .input_gate import verify_inputs
+    verify_inputs("netlist", run)
     if (run / "netlist_result.json").exists():
         raise ValueError("Netlist already prepared; create a new run for a new revision")
     cfg = run_config(run)

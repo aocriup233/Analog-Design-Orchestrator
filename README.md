@@ -133,6 +133,12 @@ For any backend, choose `simulation.rules` (for example the public [DC](agents/s
 
 ## Operate a run
 
+S2 adds a shared read-only input hash gate and durable task heartbeat/progress
+monitor. `analog-agent inspect RUN_DIR` reports STALLED separately from the
+unchanged circuit state; it never resubmits. Legacy schematic runs without a
+creation inventory cannot be re-baselined implicitly. See [the input inventory,
+timeout/reconciliation contract and deployment limits](docs/task-safety.md).
+
 `analog-agent doctor [--json]` prints a read-only deterministic safety report
 and exits non-zero on any FAIL. It never starts an LLM, simulator or Bridge,
 installs dependencies, retries tasks or cleans locks/processes. See

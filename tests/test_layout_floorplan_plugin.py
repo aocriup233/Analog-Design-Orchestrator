@@ -84,7 +84,7 @@ class FloorplanPluginTest(FloorplanPluginFixture):
         write_json(self.placement, {})
         with self.assertRaises(ValueError):
             floorplan_freeze(self.run, "reviewed")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_PENDING")
 
     def test_missing_input_or_tampered_receipt_blocks_freeze(self):
         self.configure()
@@ -92,13 +92,13 @@ class FloorplanPluginTest(FloorplanPluginFixture):
         write_json(self.run / result["generation"]["path"], {})
         with self.assertRaises(ValueError):
             floorplan_freeze(self.run, "reviewed")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_PENDING")
         self.configure()
         floorplan_generate(self.run, placement=self.placement)
         self.placement.unlink()
         with self.assertRaises(ValueError):
             floorplan_freeze(self.run, "reviewed")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_PENDING")
 
     def test_forged_provenance_and_path_escape_rejected(self):
         self.configure()
