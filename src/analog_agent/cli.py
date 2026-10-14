@@ -28,6 +28,72 @@ from .simulation_agent import cleanup_remote, reconcile_submission, simulate
 from .workflow import cleanup, decide_run, invoke_role, role_obligation, run_auto
 
 
+UNKNOWN_STATE_EXIT = 3
+
+
+def _simulation_handoff(run: Path) -> dict:
+    """Report persisted simulation evidence without changing the run."""
+    from .core import local_path
+    from .input_gate import verify_inputs
+
+    run = run.resolve()
+    state = read_json(local_path(run, "task.json"))["status"]
+    intent = local_path(run, "submission_intent.json")
+    receipt = local_path(run, "submission_result.json")
+    staging = local_path(run, "staging_result.json")
+    result_path = local_path(run, "simulation_result.json")
+
+    def uncertain(artifact: Path, reason: str) -> dict:
+        return {"run": str(run), "status": "UNKNOWN_STATE", "artifact": str(artifact),
+                "reason": reason, "next_action": "reconcile required"}
+
+    has_intent, has_receipt = intent.is_file(), receipt.is_file()
+    if has_intent != has_receipt:
+        missing = receipt if has_intent else intent
+        return uncertain(missing, "Submission evidence is incomplete")
+    if state in {"NETLIST_READY", "STAGED"} and (has_intent or has_receipt):
+        return uncertain(receipt, f"Submission evidence conflicts with durable {state} state")
+    if state in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"} and not has_receipt:
+        return uncertain(receipt, f"Durable {state} state requires a verified submission receipt")
+    if state == "STAGED" and not staging.is_file():
+        return uncertain(staging, "Durable STAGED state is missing its staging result")
+    if result_path.is_file() and state not in {"VERIFIED", "ANALYZED", "FAILED"}:
+        return uncertain(result_path, f"Simulation result conflicts with durable {state} state")
+    if state == "VERIFIED" and not result_path.is_file():
+        return uncertain(result_path, "Durable VERIFIED state is missing its simulation result")
+    try:
+        # A receipt is trusted only when its bytes were pinned by a handoff.
+        if has_receipt:
+            pinned = read_json(local_path(run, "task.json")).get("pinned_inputs", [])
+            for path in (intent, receipt):
+                if not any(item.get("scope") == "run" and item.get("path") == path.name
+                           for item in pinned):
+                    return uncertain(path, "Submission artifact has no pinned SHA-256")
+        verify_inputs("cli_report", run)
+        if has_receipt:
+            submission = read_json(receipt)
+            if submission.get("status") not in {"SUBMITTED", "RUN", "DONE", "FAILED"}:
+                return uncertain(receipt, "Submission receipt has an invalid state")
+            if submission.get("deck_sha256") != read_json(staging).get("deck_sha256"):
+                return uncertain(receipt, "Submission receipt does not match the staged deck")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return uncertain(receipt if has_receipt else staging, str(error))
+
+    if result_path.is_file():
+        result = read_json(result_path)
+        full = run_config(run).get("workflow", {}).get("return_mode") == "full"
+        return result if full else {k: v for k, v in result.items() if k != "data"}
+    obligation = role_obligation(run)
+    if state == "STAGED" and not has_intent:
+        obligation = {**obligation, "next_action": "submit"}
+        return {"run": str(run), "status": state, "staging": read_json(staging),
+                "obligation": obligation}
+    if has_receipt:
+        return {"run": str(run), "status": state, "submission": submission,
+                "obligation": obligation}
+    return {"run": str(run), "status": state, "obligation": obligation}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="analog-agent")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -178,16 +244,14 @@ def main() -> int:
             raise ValueError(f"Use resume for an existing run in {current} state")
         if args.command == "resume" and current not in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"}:
             raise ValueError(f"Cannot resume a run in {current} state")
-        invoke_role("simulation", run)
-        result_path = run / "simulation_result.json"
-        if result_path.is_file():
-            result = read_json(result_path)
-            full = run_config(run).get("workflow", {}).get("return_mode") == "full"
-            output = result if full else {k: v for k, v in result.items() if k != "data"}
+        before = _simulation_handoff(run)
+        if (before["status"] != "UNKNOWN_STATE" and current != "VERIFIED" and
+                not (current == "STAGED" and
+                     run_config(run).get("simulation", {}).get("backend") == "external")):
+            invoke_role("simulation", run)
+            output = _simulation_handoff(run)
         else:
-            output = {"run": str(run), "status": read_json(run / "task.json")["status"],
-                      "submission": read_json(run / "submission_result.json"),
-                      "obligation": role_obligation(run)}
+            output = before
     elif args.command == "analyze":
         run = args.run.resolve()
         invoke_role("analysis", run)
@@ -344,6 +408,8 @@ def main() -> int:
                 run_config(args.run).get("workflow", {}).get("return_mode") != "full"):
             output = {k: v for k, v in output.items() if k != "data"}
     print(json.dumps(output, ensure_ascii=False, indent=2))
+    if args.command in {"submit", "resume"} and output.get("status") == "UNKNOWN_STATE":
+        return UNKNOWN_STATE_EXIT
     if args.command == "recover" and (output.get("reconcile_required") or output.get("status") == "STALLED"):
         return 1
     if args.command == "layout" and args.layout_command == "floorplan-diff" and not output["empty"]:
