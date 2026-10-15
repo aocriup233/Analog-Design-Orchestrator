@@ -133,6 +133,23 @@ For any backend, choose `simulation.rules` (for example the public [DC](agents/s
 
 ## Operate a run
 
+S3 records conservative failure classes and immutable attempt evidence. Safe
+operations use bounded exponential backoff; uncertain submissions never retry.
+After token/context/process interruption, `analog-agent recover RUN_DIR` checks
+existing evidence without submitting. See [failure and recovery contracts,
+including the LSF retrieval adapter change](docs/failure-recovery.md).
+
+S2 adds a shared read-only input hash gate and durable task heartbeat/progress
+monitor. `analog-agent inspect RUN_DIR` reports STALLED separately from the
+unchanged circuit state; it never resubmits. Legacy schematic runs without a
+creation inventory cannot be re-baselined implicitly. See [the input inventory,
+timeout/reconciliation contract and deployment limits](docs/task-safety.md).
+
+`analog-agent doctor [--json]` prints a read-only deterministic safety report
+and exits non-zero on any FAIL. It never starts an LLM, simulator or Bridge,
+installs dependencies, retries tasks or cleans locks/processes. See
+[check coverage, offline dependency scope and deployment limits](docs/doctor.md).
+
 ```sh
 analog-agent new project.json --iteration 0 --set R=2k
 analog-agent submit RUN_DIR
@@ -144,6 +161,12 @@ analog-agent decide-run RUN_DIR --decision iterate --to netlist --reason "review
 ```
 
 `submit` finishes in one call for Bridge/local. For LSF, keep the returned run and invoke `resume` again after the job changes state; `analog-agent run project.json` also stops after an asynchronous submission rather than blocking indefinitely. Every run preserves its task history, input hashes, phase handoffs, logs or retrieved artifacts, and analysis report. Resume a run in the **same path environment** in which it was created (for example, do not switch a run's stored `/mnt/e/...` paths to Windows `E:\...` mid-run).
+
+For an external worker that has only staged a run, `analog-agent submit RUN_DIR`
+reports `staging_result.json` and the simulation role's `submit` obligation without
+creating submission files. Missing, changed, or conflicting submission evidence
+reports `UNKNOWN_STATE` with the affected artifact and exits with code 3; reconcile
+the actual submission before attempting another operation.
 
 `workflow.submission` selects `manual` or `auto`; `return_mode` selects compact `summary` or full parsed data; `cleanup` selects `never` or local raw-file removal `after_success`. `simulation.remote_cleanup` is `never`, `manual`, or `after_verified`; `cleanup-remote RUN_DIR` calls the private adapter only after local verification. Do not treat a queue acceptance or process exit alone as simulation success.
 
@@ -236,10 +259,31 @@ L3 adds JSON-only routing proposals, allowlisted owned-route workers, same-snaps
 DRC/LVS handoffs and explicitly reviewed bounded fixes. See
 [the L3 adapter/security contract](docs/layout-routing.md). Missing audited private
 Bridge and native verification adapters fail closed; fake-backend tests do not
-certify a real router, foundry integration or live layout. L4 remains unimplemented.
+certify a real router, foundry integration or live layout. L4 adds only the
+[reserved floorplan plugin interface](docs/layout-floorplan-plugin.md): manual
+by default, hashed private rules and an optional trusted `.py:function` that
+returns proposal JSON. The echo example implements no placement algorithm.
+`floorplan-generate` never applies placement, calls a Bridge operation, freezes
+or routes. A human must make the live layout match the reviewed proposal;
+the existing freeze, L2 check and separate routing-review gates still apply.
+`floorplan-diff` lists target origins/orientations and other live differences,
+without applying changes. `floorplan-score` evaluates deterministic enclosing
+area, aspect ratio, center-based HPWL estimates and L2 symmetry/matching
+compliance for candidate or live placement. Missing connectivity makes HPWL
+incomplete, not deceptively cheap. Axis/style preferences are checked against
+explicitly ID-linked frozen constraints before any generator call.
 No command moves manual instances.
 Plugins and `role_commands` are trusted code/config, not sandboxes; LLM roles
 are restricted to JSON proposals, with no Bridge capability or foundry rules.
+Every ADO Bridge operation is from the documented typed operation allowlist;
+there is no arbitrary SKILL, `system()` or `sh()` escape hatch. Plugin generation
+is a separate JSON-only operation, not a new Bridge placement capability.
+All plugin calls use `plugins.load_function` and all local inputs/outputs use
+`core.local_path`. Project-local plugins remain trusted executable Python (not
+a sandbox); audit them before configuration. LLM output must never become an
+executable plugin or arbitrary SKILL/shell text. Only the user-configured numeric
+tech summary is supplied as technology information, never raw foundry rule
+files, runsets, credentials or site command configuration.
 Keep `private/`, `runs/` and `layouts/` ignored in user project repositories.
 
 - **PVT and Monte Carlo:** add declarative corner, temperature, supply, variation and sample/seed configuration, with bounded scheduling, per-point provenance, partial-failure recovery, and cross-corner/statistical analysis. `virtuoso-bridge` already exposes Maestro controls, but ADO does **not** yet turn Maestro PVT/MC setup, execution and result collection into a portable, tested role workflow. The netlist-driven and Maestro-driven paths should share run evidence and analysis contracts while keeping PDK-specific corners and models private.

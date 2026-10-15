@@ -12,11 +12,13 @@ from .layout_floorplan import _frozen, require_unchanged_floorplan
 from .layout_runs import LayoutEvidenceError, layout_context, layout_lock, layout_path
 from .layout_routing import fields, routing_context, validate_plan
 from .state import status, transition
+from .input_gate import checked_stage
 
 
 def attention(run, kind="ExecutionUncertain"):
     if status(run) not in {"NEEDS_ATTENTION", "FLOORPLAN_PENDING"}:
         transition(run, "NEEDS_ATTENTION", error={"kind": kind,
+                   "class": "needs_human" if kind in {"LayoutEvidenceError", "ValueError", "TypeError", "NotImplementedError"} else "unknown_state",
                    "message": "Layout execution/evidence is uncertain; reconcile before any retry"})
 
 
@@ -47,6 +49,7 @@ def publish(run, category, value):
     return {"path": path.relative_to(run).as_posix(), "sha256": sha256(path)}
 
 
+@checked_stage("layout_route")
 def route(run: Path, *, session=None, fix=None):
     run = layout_path(run)
     if session is None:

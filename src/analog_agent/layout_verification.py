@@ -17,6 +17,7 @@ from .layout_routing import fields
 from .layout_worker import attention, publish, snapshot
 from .layout_lvs_source import prepare_source, check_source
 from .state import status, transition
+from .input_gate import checked_stage
 
 
 def parse_report(raw: bytes, *, stage, tool):
@@ -128,6 +129,7 @@ def _unchanged_export(run, export):
             raise LayoutEvidenceError("Immutable verification snapshot changed")
 
 
+@checked_stage("layout_verify")
 def verify(run: Path, *, session=None):
     run = layout_path(run)
     if session is None:
@@ -227,6 +229,9 @@ def verify(run: Path, *, session=None):
                 **rules, **parsed, "lvs_match": json.loads(raw)["lvs_match"], "cellview_sha256": full["sha256"], "placement_sha256": full["placement_sha256"],
                 "routing_result": task["active_routing_result"], "export": export, "raw_reports": hashes,
                 "work_dir": str(work), "lvs_source": source_ref, "source_cdl_sha256": receipt["source_cdl_sha256"]}
+            if not report["clean"]:
+                report["failure"] = {"class": "needs_human", "code": "verification_not_clean",
+                                     "next_step": "review violations before an explicitly approved fix"}
             reference = publish(run, f"{stage}_reports", report)
             write_json(local_path(run, f"{stage}_report.json"), report)
             transition(run, end, **{f"active_{stage}_report": reference})

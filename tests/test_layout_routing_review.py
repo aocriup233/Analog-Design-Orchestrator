@@ -61,7 +61,7 @@ class RoutingReviewTest(LayoutFloorplanFixture):
         write_json(self.run / checked["path"], {})
         with self.assertRaises(ValueError):
             require_unchanged_floorplan(self.run, "routing")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_FROZEN")
 
     def test_clean_decision_and_movement_invalidate_authority(self):
         self.unreviewed()
@@ -86,4 +86,4 @@ class RoutingReviewTest(LayoutFloorplanFixture):
         write_json(self.run / ref["path"], {})
         with self.assertRaises(ValueError):
             require_unchanged_floorplan(self.run, "routing")
-        self.assertEqual(status(self.run), "NEEDS_ATTENTION")
+        self.assertEqual(status(self.run), "FLOORPLAN_FROZEN")

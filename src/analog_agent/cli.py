@@ -13,6 +13,9 @@ from .parameters import validate_values
 from . import memory as project_memory
 from .layout_runs import clone_layout, layout_context, layout_path, lock_info, prepare_layout
 from .layout_floorplan import floorplan_export, floorplan_freeze, require_unchanged_floorplan
+from .layout_floorplan_plugin import floorplan_generate
+from .layout_floorplan_diff import floorplan_diff
+from .layout_floorplan_score import floorplan_score
 from .layout_constraints import constraints_draft, constraints_freeze
 from .layout_placement_check import floorplan_constraints_check, routing_review
 from .layout_routing import propose_routing
@@ -25,9 +28,78 @@ from .simulation_agent import cleanup_remote, reconcile_submission, simulate
 from .workflow import cleanup, decide_run, invoke_role, role_obligation, run_auto
 
 
+UNKNOWN_STATE_EXIT = 3
+
+
+def _simulation_handoff(run: Path) -> dict:
+    """Report persisted simulation evidence without changing the run."""
+    from .core import local_path
+    from .input_gate import verify_inputs
+
+    run = run.resolve()
+    state = read_json(local_path(run, "task.json"))["status"]
+    intent = local_path(run, "submission_intent.json")
+    receipt = local_path(run, "submission_result.json")
+    staging = local_path(run, "staging_result.json")
+    result_path = local_path(run, "simulation_result.json")
+
+    def uncertain(artifact: Path, reason: str) -> dict:
+        return {"run": str(run), "status": "UNKNOWN_STATE", "artifact": str(artifact),
+                "reason": reason, "next_action": "reconcile required"}
+
+    has_intent, has_receipt = intent.is_file(), receipt.is_file()
+    if has_intent != has_receipt:
+        missing = receipt if has_intent else intent
+        return uncertain(missing, "Submission evidence is incomplete")
+    if state in {"NETLIST_READY", "STAGED"} and (has_intent or has_receipt):
+        return uncertain(receipt, f"Submission evidence conflicts with durable {state} state")
+    if state in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"} and not has_receipt:
+        return uncertain(receipt, f"Durable {state} state requires a verified submission receipt")
+    if state == "STAGED" and not staging.is_file():
+        return uncertain(staging, "Durable STAGED state is missing its staging result")
+    if result_path.is_file() and state not in {"VERIFIED", "ANALYZED", "FAILED"}:
+        return uncertain(result_path, f"Simulation result conflicts with durable {state} state")
+    if state == "VERIFIED" and not result_path.is_file():
+        return uncertain(result_path, "Durable VERIFIED state is missing its simulation result")
+    try:
+        # A receipt is trusted only when its bytes were pinned by a handoff.
+        if has_receipt:
+            pinned = read_json(local_path(run, "task.json")).get("pinned_inputs", [])
+            for path in (intent, receipt):
+                if not any(item.get("scope") == "run" and item.get("path") == path.name
+                           for item in pinned):
+                    return uncertain(path, "Submission artifact has no pinned SHA-256")
+        verify_inputs("cli_report", run)
+        if has_receipt:
+            submission = read_json(receipt)
+            if submission.get("status") not in {"SUBMITTED", "RUN", "DONE", "FAILED"}:
+                return uncertain(receipt, "Submission receipt has an invalid state")
+            if submission.get("deck_sha256") != read_json(staging).get("deck_sha256"):
+                return uncertain(receipt, "Submission receipt does not match the staged deck")
+    except (OSError, ValueError, KeyError, TypeError) as error:
+        return uncertain(receipt if has_receipt else staging, str(error))
+
+    if result_path.is_file():
+        result = read_json(result_path)
+        full = run_config(run).get("workflow", {}).get("return_mode") == "full"
+        return result if full else {k: v for k, v in result.items() if k != "data"}
+    obligation = role_obligation(run)
+    if state == "STAGED" and not has_intent:
+        obligation = {**obligation, "next_action": "submit"}
+        return {"run": str(run), "status": state, "staging": read_json(staging),
+                "obligation": obligation}
+    if has_receipt:
+        return {"run": str(run), "status": state, "submission": submission,
+                "obligation": obligation}
+    return {"run": str(run), "status": state, "obligation": obligation}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(prog="analog-agent")
     sub = parser.add_subparsers(dest="command", required=True)
+    doctor = sub.add_parser("doctor", help="Read-only deterministic safety report (never cleans or submits)")
+    doctor.add_argument("--json", action="store_true", help="Print the structured report")
+    doctor.add_argument("--require-symlinks", action="store_true", help="FAIL if any symlink probe is skipped (Linux CI gate)")
     new = sub.add_parser("new", help="Create a run and prepare its netlist")
     new.add_argument("config", type=Path)
     new.add_argument("--iteration", type=int, default=0)
@@ -43,6 +115,13 @@ def main() -> int:
     auto.add_argument("config", type=Path)
     status = sub.add_parser("status")
     status.add_argument("run", type=Path)
+    inspect = sub.add_parser("inspect")
+    inspect.add_argument("run", type=Path)
+    recover = sub.add_parser("recover", help="Read-only recovery checks after context/token/process interruption; never submits")
+    recover.add_argument("run", type=Path)
+    monitor = sub.add_parser("monitor")
+    monitor.add_argument("run", type=Path)
+    monitor.add_argument("--max-seconds", type=float, default=60)
     duty = sub.add_parser("duty", help="Show the role still responsible for a run")
     duty.add_argument("run", type=Path)
     decision = sub.add_parser("decide-run", help="Route a reviewed run to its next role")
@@ -113,9 +192,13 @@ def main() -> int:
     layout_prepare.add_argument("schematic", type=Path)
     layout_prepare.add_argument("--allow-failing-design", action="store_true")
     layout_prepare.add_argument("--reason", default="")
-    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
+    for name in ("status", "lock-info", "clone", "constraints", "constraints-freeze", "floorplan-export", "floorplan-generate", "floorplan-diff", "floorplan-score", "floorplan-freeze", "floorplan-check", "constraints-check", "routing-review", "routing-propose", "route", "verify", "fix-propose", "fix"):
         action = layout_actions.add_parser(name)
         action.add_argument("run", type=Path)
+        if name == "floorplan-generate":
+            action.add_argument("--placement", type=Path, help="Optional private user-supplied placement for an echo generator")
+        if name == "floorplan-score":
+            action.add_argument("--source", choices=["candidate", "live"], default="candidate")
         if name in {"floorplan-freeze", "constraints-freeze"}:
             action.add_argument("--reason", required=True, help="Human review rationale")
         if name == "constraints-freeze":
@@ -129,6 +212,25 @@ def main() -> int:
     worker.add_argument("role", choices=["netlist", "simulation", "analysis"])
     worker.add_argument("run", type=Path)
     args = parser.parse_args()
+    if args.command == "doctor":
+        import sys
+        sys.dont_write_bytecode = True
+        from .doctor import diagnose
+        report = diagnose(require_symlinks=args.require_symlinks)
+        if args.json:
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+        else:
+            for check in report["checks"]:
+                print(f'{check["status"]}: {check["check"]}')
+                if check.get("scope") or check.get("reason"):
+                    print("  " + check.get("scope", check.get("reason", "")))
+                for item in check["findings"]:
+                    print("  " + json.dumps(item, ensure_ascii=False, sort_keys=True))
+                for item in check.get("limitations", []) + check.get("skipped", []) + check.get("warnings", []):
+                    print("  " + json.dumps(item, ensure_ascii=False, sort_keys=True))
+                for item in check.get("orphan_processes", []):
+                    print("  orphan " + json.dumps(item, sort_keys=True))
+        return int(report["status"] == "FAIL")
     if args.command == "new":
         overrides = dict(item.split("=", 1) for item in args.set)
         overrides = validate_values(overrides, load_config(args.config).get("parameters", {}))
@@ -142,16 +244,14 @@ def main() -> int:
             raise ValueError(f"Use resume for an existing run in {current} state")
         if args.command == "resume" and current not in {"SUBMITTED", "RUN", "DONE", "RETRIEVED", "VERIFIED"}:
             raise ValueError(f"Cannot resume a run in {current} state")
-        invoke_role("simulation", run)
-        result_path = run / "simulation_result.json"
-        if result_path.is_file():
-            result = read_json(result_path)
-            full = run_config(run).get("workflow", {}).get("return_mode") == "full"
-            output = result if full else {k: v for k, v in result.items() if k != "data"}
+        before = _simulation_handoff(run)
+        if (before["status"] != "UNKNOWN_STATE" and current != "VERIFIED" and
+                not (current == "STAGED" and
+                     run_config(run).get("simulation", {}).get("backend") == "external")):
+            invoke_role("simulation", run)
+            output = _simulation_handoff(run)
         else:
-            output = {"run": str(run), "status": read_json(run / "task.json")["status"],
-                      "submission": read_json(run / "submission_result.json"),
-                      "obligation": role_obligation(run)}
+            output = before
     elif args.command == "analyze":
         run = args.run.resolve()
         invoke_role("analysis", run)
@@ -161,10 +261,35 @@ def main() -> int:
             cleanup(run)
     elif args.command == "run":
         output = run_auto(args.config)
-    elif args.command == "status":
+    elif args.command == "monitor":
+        from .task_monitor import watch_tasks
+        output = watch_tasks(args.run, max_seconds=args.max_seconds)
+    elif args.command in {"status", "inspect", "recover"}:
         run = args.run.resolve()
-        output = {"task": read_json(run / "task.json"),
-                  "obligation": role_obligation(run)}
+        if args.command == "recover":
+            from .input_gate import verify_inputs
+            verify_inputs("recovery", run)
+        task = read_json(run / "task.json")
+        output = {"task": task}
+        if task.get("kind") != "layout":
+            output["obligation"] = role_obligation(run)
+        from .task_monitor import inspect_tasks
+        output["tasks"] = inspect_tasks(run)
+        from .failures import inspect_attempts
+        output["attempts"] = inspect_attempts(run)
+        from .core import local_path
+        output["attempt_locks"] = [{"path": p.relative_to(run).as_posix(), "owner": read_json(local_path(run, str(p)))}
+                                   for p in sorted(run.glob(".attempt-*.lock"))]
+        output["reconcile_required"] = any(e.get("operation") and not e.get("reconciled") and
+                    (e["status"] == "UNKNOWN_STATE" or e.get("failure", {}).get("class") == "unknown_state")
+                    for e in output["attempts"])
+        if (run / "submission_intent.json").is_file() and not (run / "submission_result.json").is_file():
+            output["reconcile_required"] = True
+        if output["attempt_locks"]:
+            output["reconcile_required"] = True
+        output["status"] = "STALLED" if any(t["status"] == "STALLED" for t in output["tasks"]) else output["task"]["status"]
+        if output["reconcile_required"]:
+            output["status"] = "UNKNOWN_STATE"
         for name in ("netlist_result", "simulation_result", "analysis_result"):
             path = run / f"{name}.json"
             if path.is_file():
@@ -230,8 +355,17 @@ def main() -> int:
             run = layout_path(args.run)
             layout_context(run)
             output = {"task": read_json(run / "task.json")}
+            from .task_monitor import inspect_tasks
+            output["tasks"] = inspect_tasks(run)
+            output["status"] = "STALLED" if any(t["status"] == "STALLED" for t in output["tasks"]) else output["task"]["status"]
         elif args.layout_command == "floorplan-export":
             output = floorplan_export(args.run)
+        elif args.layout_command == "floorplan-generate":
+            output = floorplan_generate(args.run, placement=args.placement)
+        elif args.layout_command == "floorplan-diff":
+            output = floorplan_diff(args.run)
+        elif args.layout_command == "floorplan-score":
+            output = floorplan_score(args.run, source=args.source)
         elif args.layout_command == "constraints":
             output = constraints_draft(args.run)
         elif args.layout_command == "constraints-freeze":
@@ -274,6 +408,12 @@ def main() -> int:
                 run_config(args.run).get("workflow", {}).get("return_mode") != "full"):
             output = {k: v for k, v in output.items() if k != "data"}
     print(json.dumps(output, ensure_ascii=False, indent=2))
+    if args.command in {"submit", "resume"} and output.get("status") == "UNKNOWN_STATE":
+        return UNKNOWN_STATE_EXIT
+    if args.command == "recover" and (output.get("reconcile_required") or output.get("status") == "STALLED"):
+        return 1
+    if args.command == "layout" and args.layout_command == "floorplan-diff" and not output["empty"]:
+        return 1
     if args.command == "layout" and args.layout_command == "floorplan-freeze" and output.get("status") != "FLOORPLAN_FROZEN":
         return 1
     if args.command == "layout" and args.layout_command in {"verify", "fix"} and not output.get("clean", False):

@@ -68,7 +68,9 @@ class LayoutWorkerTest(LayoutWorkerFixture):
         self.assertEqual(status(self.run), "FLOORPLAN_FROZEN")
         results = list((self.run / "execution").glob("*/result.json"))
         self.assertEqual(len(results), 1)
-        self.assertEqual(read_json(results[0]), {"status": "unsupported"})
+        from analog_agent.layout_adapter_context import adapter_context, context_sha256
+        channel = adapter_context(self.run, results[0].parent, results[0].parent)
+        self.assertEqual(read_json(results[0]), {"status": "unsupported", "context_sha256": context_sha256(channel)})
 
     def test_timeout_second_communicate_is_always_timeout_error(self):
         import subprocess
@@ -76,6 +78,8 @@ class LayoutWorkerTest(LayoutWorkerFixture):
         with patch("analog_agent.layout_executor.subprocess.Popen") as factory, \
              patch("analog_agent.layout_executor._kill_reader") as kill:
             process = factory.return_value
+            process.pid = 12345
+            process.poll.return_value = None
             process.communicate.side_effect = subprocess.TimeoutExpired("fixture", 1)
             with self.assertRaises(TimeoutError):
                 execute(self.run, "read_layout_snapshot", {})

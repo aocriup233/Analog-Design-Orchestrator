@@ -1,5 +1,24 @@
 # Layout L1/L2: configuration, constraints and manual floorplan
 
+S3 adds classified [immutable attempt/recovery evidence](failure-recovery.md).
+Typed-operation retries require an audited no-side-effects attestation; unknown
+layout execution is never retried automatically and stale locks stay untouched.
+
+S2 stage entry gates now reject pinned-input mismatches **without changing the
+current state**, before any Bridge call. This supersedes the older preflight
+tampering-to-NEEDS_ATTENTION behaviour below; failures discovered after execution
+starts retain the existing unknown-state/reconciliation boundaries. Reader and
+typed adapter processes share the [durable task monitor](task-safety.md).
+
+L4's optional [floorplan plugin contract](layout-floorplan-plugin.md) extends
+schema 2 with `source="plugin"` and required `plugin_sha256`. It only proposes
+JSON; no placement algorithm or mutation is implemented. Live Bridge exports
+always remain `source="manual"`. Physical placement hashes ignore generation
+provenance so identical live/proposed geometry compares equal; full file,
+generation and freeze receipts separately pin that provenance. Existing manual
+placement hashes are unchanged. Plugin proposals use the same human freeze,
+live readback, L2 constraint check and separate routing-release gates.
+
 L1/L2 is an opt-in framework with fake-backend tests, not a certified live Virtuoso
 workflow. [L2 constraints](layout-constraints.md) add reviewed retrieval and
 advisory placement checks. [L3 routing/verification](layout-routing.md) adds typed
@@ -212,7 +231,9 @@ lock: concurrent human editing remains a snapshot/use race, not solved by hashes
 
 The only L1 operation ID is `read_placement`. The trusted adapter signature is
 `read_placement(context) -> floorplan dict`. Context contains only operation ID,
-exact target library/cell/view, and numeric timeout; it contains no live client,
+exact target library/cell/view, numeric timeout, and the versioned, run-confined
+`adapter_context` shared with typed operations (see [routing and verification](layout-routing.md));
+it contains no live client,
 raw SKILL, shell command, rule content or writable floorplan operation. The
 worker supplies/overwrites the export timestamp and validates the full schema.
 Adapters use ValueError for known input rejection and NotImplementedError for

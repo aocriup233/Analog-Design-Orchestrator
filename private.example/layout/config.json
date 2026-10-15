@@ -5,6 +5,7 @@
     "cell": "USER_CELL",
     "timeout_s": 300,
     "max_fix_iterations": 3,
+    "floorplan": {"mode": "manual"},
     "allow_leading_digit": false,
     "grid_nm": "REPLACE_WITH_PRIVATE_POSITIVE_GRID_IN_NM",
     "bbox_tolerance_nm": 0,
