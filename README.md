@@ -1,299 +1,85 @@
 # Analog Design Orchestrator (ADO)
 
-**An evidence-driven workflow for analog IC design, simulation, and analysis.**
+**Reproducible, reviewable handoffs for analog IC design.** ADO coordinates netlist preparation, simulation, and analysis through deterministic Python workers. The designer or an external controller makes circuit decisions; workers exchange JSON artifacts pinned by SHA-256.
 
-Role processes have a finite `workflow.role_timeout_s` timeout (default 3600 seconds).
-`workflow.role_commands` is a **trusted configuration-level execution hook**, not
-an untrusted proposal interface: its argument arrays can execute arbitrary programs.
-Only project owners should edit it. A timed-out submission must be reconciled,
-not blindly retried; terminating a worker does not cancel a scheduler job.
+[简体中文](README.zh-CN.md) · [MIT License](LICENSE)
 
-JSON handoffs fsync the temporary file before atomic replacement, and fsync the
-containing directory before and after replacement on POSIX. Windows does not
-provide POSIX directory fsync: file contents are flushed there, but directory
-entry durability across power loss is not guaranteed by this Python API.
+> **Provisional `0.2.0-1015` snapshot.** This branch is for review, not a certified PDK, cluster, or physical-design release. The package and CLI remain named `analog-agent`; the Python package version is `0.2.0.dev1015`. No PyPI publication is implied.
 
-Security defaults: module plugins must match `plugins.allowed_modules` (default
-`["analog_agent.proposers"]`, including its submodules). Project-local `.py`
-plugins remain trusted executable code. Dangerous standard-library callable
-origins are rejected even through local aliases. `simulation.spectre_cmd` must
-be a single absolute executable path or an allowed command name from
-`simulation.allowed_spectre_commands` (default `["spectre"]`); wrapper command
-strings and whitespace are not accepted. The audited bridge source uses
-argument-array subprocess calls, not `shell=True`; deployments must audit/pin
-their optional bridge dependency as well. The layout audit additionally found
-remote shell dispatch through SSH transport, despite no `shell=True`; generic
-Bridge execution hooks are not safe typed layout operations. LSF requires `remote_sha256` by
-default; explicit `simulation.require_remote_sha256: false` is a compatibility
-opt-out, not equivalent verification. Relative result paths are run-relative.
+![ADO architecture and review gates](docs/architecture-workflow.svg)
 
-`ac_db_at` rejects targets outside the recorded sweep. Its optional
-`"interpolate": true` linearly interpolates dB magnitude versus log frequency;
-the default still chooses the nearest sample. Campaign proposal generation is
-serialized with campaign mutations; idle campaign loops wait at least one second.
+## Architecture and ownership
 
-[简体中文](README.zh-CN.md)
+| Boundary | Responsibility | Durable evidence |
+|---|---|---|
+| Decision layer | User or external LLM selects a revision, testbench and candidates, then reviews the outcome. Proposals never auto-submit. | Campaign points and decisions |
+| Netlist worker | Renders a project-defined block and testbench; never launches a simulator. | `netlist_result.json`, immutable `input.scs`, input hashes |
+| Simulation worker | Builds the deck, stages/submits/polls/retrieves, verifies scheduler **and** simulator results, and owns remote cleanup. | Submission/retrieval receipts, `simulation_result.json` |
+| Analysis worker | Measures verified results against project rules; never reruns Spectre implicitly. | `analysis_result.json`, plots, verdict and review |
+| Optional layout workflow | Links a reviewed schematic run, freezes constraints and floorplan, then uses audited typed adapters for routing and DRC/LVS. | Separate `layouts/<id>/` handoffs and hashes |
 
-ADO separates circuit decisions from EDA operations. A designer or an external LLM controller proposes a circuit revision; three process-isolated workers prepare its netlist, execute configured analyses, and measure the results. Each step writes a durable, hash-checked handoff under a unique run directory.
+`runs/<id>/` and `layouts/<id>/` are separate state machines. Stage-entry hash checks refuse changed pinned inputs without advancing state. A missing or conflicting submission receipt is **UNKNOWN_STATE**, not permission to submit again. `analog-agent recover RUN_DIR` inspects interrupted work without submitting; reconciliation must establish the actual remote job before retry. Task monitoring reports stalls without automatic resubmission. Bounded retries preserve old evidence in new attempt directories; see [failure recovery](docs/failure-recovery.md) and [task safety](docs/task-safety.md).
 
-The Python distribution and CLI remain named `analog-agent` for compatibility. **ADO is the project name, not a new CLI command.**
+Public code contains no PDK rules, site paths, credentials or circuit-specific policy. User-owned `private/` provides those integrations and must be ignored in a project repository. `private.example/` documents interfaces, not a working cluster or Virtuoso adapter. Project-local Python plugins and `workflow.role_commands` are trusted executable configuration, not a sandbox. Only reviewed memory enters bounded decision context.
 
-![ADO architecture and workflow](docs/architecture-workflow.svg)
+## Included in this snapshot
 
-The diagram shows the three role handoffs, the campaign decision loop, and the separate offline replay path. Public scripts and private project adapters feed the same workflow without embedding PDK or site assumptions.
+- **Safety S1–S3:** read-only `doctor`; `verify_inputs` and task monitoring; classified failures, capped retries and append-only attempts. **ADO-01:** state-first simulation CLI reports legal `STAGED` runs and reconciles uncertain evidence. **ADO-02:** typed layout adapters receive a versioned, run-confined context.
+- **Design exploration:** bounded campaigns, optional constrained multi-objective BO, reviewed memory and offline replay. **Layout L1–L4:** linked runs and manual floorplan; frozen constraints; reviewed routing/DRC/LVS loop; proposal-only floorplan plugin.
+- Immutable `CREATED → NETLIST_READY → STAGED → SUBMITTED → RUN → DONE → RETRIEVED → VERIFIED → ANALYZED` handoffs, with legal short-job skips, explicit failure states and reviewed next-run decisions. `PASS` means only that the **project's** rules passed.
+- Reusable circuit blocks and independent testbenches, DC/AC/STB/transient rule files, generic waveform/eye/FFT tools, and project-defined metric plugins. Legacy single-file netlists remain supported.
+- `bridge`, `local`, asynchronous `lsf`, and `external` simulation backend interfaces. LSF and external execution need a site-tested private adapter. `external` stages a deck but does **not** submit it.
+- Durable campaigns with bounded parallel points, explicit review gates, read-only replay, reviewed private memory, and an optional [multi-objective Bayesian proposer](docs/mobo.md) (`.[bo]`). A proposer only suggests points; the user still runs `campaign add`.
+- Read-only `doctor`, stage-entry hash gates, heartbeat monitoring and classified recovery. These checks do not certify a live cluster or PDK.
+- An **opt-in layout framework**: linked layout runs, reviewed constraints, manual or plugin-proposed floorplans, deterministic diff/score, JSON-only routing plans and typed DRC/LVS handoffs. Its tests use fake adapters. Real deployment still needs audited private placement, routing, LVS-source and verification adapters; ADO does not claim a live inverter layout has passed DRC/LVS.
 
-## What is implemented
+## Install and start
 
-- Optional reusable `block.scs` plus goal-specific `testbench.scs`, composed into design `input.scs`; simulator-owned `simulation.scs` remains separate, with reusable DC, AC, STB, and transient rule files. Legacy single-file input remains supported.
-- Bridge, local Spectre, and asynchronous LSF *backend interfaces*. LSF requires a working private site adapter; the supplied adapter is a template, not a configured cluster connection.
-- Durable `CREATED → NETLIST_READY → STAGED → SUBMITTED → RUN → DONE → RETRIEVED → VERIFIED → ANALYZED` transitions. A short job may skip `RUN`; a reported failure enters `FAILED`. `resume` makes one poll and continues retrieval and verification when the scheduler reports `DONE`.
-- Generic waveform windows, overlays, samples, reference comparisons, eye diagrams, and FFTs; project plugins provide circuit-specific metrics.
-- Public configuration plus ignored, user-owned private configuration, scripts, and skills.
-
-Workers are deterministic Python processes, **not three built-in autonomous LLMs**. An LLM controller may use their artifacts to choose the next design. Optional private memory now supports bounded retrieval and explicitly reviewed write-back; it does not self-approve lessons or provide a ready-to-use adapter for every cluster.
-
-## Installation and a first run
-
-Use Python 3.10+ in an environment that can run your selected simulator. For Cadence Bridge work, use an environment with `virtuoso_bridge` already installed; ADO does not install Spectre, Virtuoso, a PDK, or a license. Install the package from this directory:
+Use Python 3.10+ in an existing environment. ADO does not install Spectre, Virtuoso, a PDK or a license.
 
 ```sh
 python -m pip install -e .
-# Optional plotting tools: python -m pip install -e '.[analysis]'
+# Optional: python -m pip install -e '.[analysis]'
+# Optional: python -m pip install -e '.[bo]'
+analog-agent doctor
+analog-agent new project.example.json
 ```
 
-`project.example.json` is an RC smoke-test configuration whose paths are relative to this repository. To inspect netlist generation without launching a simulator:
+`project.example.json` is a repository-relative RC fixture. `new` prepares a netlist run; it does **not** prove simulator availability. Do not call `submit` until your backend and private dependencies are configured. For a separate project, copy the *shape* of `project.example.json` and `private.example/`, then supply your own block, testbench, rules, metrics, model includes and backend. Never put credentials in JSON, command arguments, artifacts or Git.
+
+For a configured project, the manual sequence is:
 
 ```sh
-cp project.example.json project.json
-analog-agent new project.json
-```
-
-The command prints the new `runs/<run_id>` path. Do not run `submit` until the chosen backend and its simulator or private site adapter are configured. For a separate user project, place its own `project.json`, design template or generator, rule files, and `private/` tree together; update every path copied from the repository example.
-
-## What each user configures
-
-| Scope | Configure | Where |
-|---|---|---|
-| Circuit project | Design template **or** `netlist.generator`, legal parameters and candidates, analyses, saved signals, metric plugins, and project-defined acceptance rules | `<project>/project.json`, templates, rule/plugin files |
-| Private global environment | Simulator executable or Bridge profile; for LSF, host/transfer topology, queue/resources, remote paths, PDK model locations and sections | `<project>/private/global/config/` and reusable private scripts |
-| Netlist role | PDK-valid devices, pin order, includes, and any circuit-specific generator | `<project>/private/agents/netlist/` |
-| Simulation role | DC/AC/STB/tran/custom rule JSON, execution backend and site adapter, polling/retrieval/cleanup behavior | `<project>/private/agents/simulation/` and `simulation` config |
-| Analysis role | Circuit-specific measurement functions and thresholds; optional waveform requests | `<project>/private/agents/analysis/` and `metrics`/`rules` config |
-
-### Reusable blocks and measurement-specific testbenches
-
-For a new project, `netlist.block` can point to an LLM-authored Spectre `subckt` (`kind: source`) or to a local Analog Canvas `.icproj.json` (`kind: canvas`). Explicit `name` and ordered `pins` are mandatory. `netlist.testbenches` names independent TB sources or project-local generators; `default_testbench` is required. For example:
-
-```json
-{
-  "netlist": {
-    "block": {"kind": "source", "path": "blocks/dut.scs", "name": "dut", "pins": ["IN", "OUT", "VSS"]},
-    "testbenches": {"dc": {"path": "tb/dc.scs"}, "ac": {"path": "tb/ac.scs"}},
-    "default_testbench": "dc"
-  }
-}
-```
-
-The TB supplies stimuli, loads and one block instance; the simulation role still owns analysis statements through `simulation.rules`. Optional `simulation.rules_by_testbench` maps a TB name to its own rule-file list, for example `{"dc": ["rules/dc.json"], "ac": ["rules/ac.json"]}`. Run `analog-agent new project.json --testbench ac` to select that TB and rule set. In a campaign points file, each point may select `"testbench": "ac"`; equal parameter values with different TBs remain distinct points. The worker stores `block.scs`, `testbench.scs`, their hashes, and a composed `input.scs` for existing simulators. Editing any prepared artifact requires a new run.
-
-For a Canvas block, set `project` instead of `path`. Prefer `"canvas_root_config": "private/global/config/canvas.json"` in the block and put `{"canvas_root": "path to a locally built Analog Canvas checkout", "node": "node"}` in that private JSON. ADO owns the export interface, not the installation path. The older `canvas_root` or a private mapping function such as `"adapter": "private/agents/netlist/scripts/map_canvas.py:export"` remain alternatives; choose exactly one. The adapter receives `(config, task, run, values)` and returns a Spectre block-file path. Declare extra mapping/model inputs in `netlist.block.dependencies`; the private Canvas config and export-module hashes are recorded automatically. Canvas export and interface checking are structural only: a user must review PDK mapping and simulation results. No PDK mapping or circuit-specific objective is built into ADO.
-
-For a site-specific model bundle, `netlist.block.model_bundle` can name a private config file, renderer function, and exact begin/end markers in the block source. The netlist worker replaces only that marked region and records both private-input hashes in the run. The project owns model order, sections, and device mapping; changing any of them requires a new run.
-
-The netlist stage is `new` or the `CREATED` campaign point. Offline multi-cycle replay is a separate decision-stage command, `analog-agent campaign replay PROJECT.json HISTORY.json`: it checks recorded proposals, comparisons and decisions without preparing a block/TB, creating runs or launching simulation. It is a rehearsal of campaign reasoning, not a substitute for electrical verification.
-
-Start with `private.example/` for file shapes. Four optional `private/**/config/overrides.json` files are merged into the public project configuration at runtime. Their contents are not copied into `runs/<run_id>/config.json`; the run records their SHA-256 hashes and refuses to continue if they change mid-run. Other private files, including example `pdk.json` and `transfer.json`, are **not read automatically**: the user's generator or site adapter must load them. Keep credentials in an interactive prompt or an operating-system secret facility, never in configuration, command arguments, artifacts, or the repository. If the user project has its own Git repository, ignore its `private/` and `runs/` directories there too.
-
-For a remote site, configure and verify the path in this order: (1) login hops and the actual remote identity/project directory; (2) PDK/model visibility and the netlist's device/include mapping; (3) upload/download transport with hashes; (4) LSF queue, resources, job ID, and status polling; (5) Spectre command, mode, output location, and success checks; (6) retrieval, parsed measurements, and post-verification cleanup. An SSH-to-Telnet-to-LSF site implements those hops in its private adapter and scripts. Capture the real output at each consequential step; a successful login or simulation must not be inferred from a command exit alone.
-
-### Choose an execution backend
-
-| Backend | Required user setup | Behavior |
-|---|---|---|
-| `bridge` | Working Virtuoso Bridge environment/profile and Spectre access | Synchronous submit and verified parsed result |
-| `local` | Local Spectre executable (`simulation.spectre_cmd`) | Synchronous submit and verified parsed result |
-| `lsf` | Private factory at `simulation.adapter`; implement all six site methods | Asynchronous submit, then one poll per `resume` call |
-| `external` | A project-private, agent-operated executor that obeys the run artifacts and hashes | Stages a deck and waits for independently verified execution; does not submit by itself |
-
-For LSF, a private override may select the adapter without publishing site details:
-
-```json
-{
-  "simulation": {
-    "backend": "lsf",
-    "adapter": "private/agents/simulation/scripts/site_lsf_adapter.py:create",
-    "remote_cleanup": "manual"
-  }
-}
-```
-
-Copy [the adapter template](private.example/agents/simulation/scripts/site_lsf_adapter.py) and implement `stage`, `submit`, `poll`, `retrieve`, `verify`, and `cleanup` using reusable site functions. `stage` must confirm the deck hash; `submit` returns a real job ID; `poll` distinguishes submitted/RUN/DONE/failure; `retrieve` lists local artifacts and their SHA-256 (provide `remote_sha256` for a cross-end check); `verify` must confirm scheduler **and** simulator success and return parsed data. Use the run ID as a remote idempotency key so an interruption during submission cannot create a duplicate job. The core validates transitions and local artifacts, and compares the remote hash when provided, but it cannot prove that an unimplemented site adapter actually logged in or transferred files.
-
-For any backend, choose `simulation.rules` (for example the public [DC](agents/simulation/config/dc.json), [AC](agents/simulation/config/ac.json), [STB](agents/simulation/config/stb.json), or [tran](agents/simulation/config/tran.json) rules), `save_signals`, mode, timeout, and PSF ASCII output. Set the STB probe to a real instance in the circuit netlist; the shared example is a placeholder and margin interpretation remains project-specific. A custom Python rule renderer can add other analyses supported by your installation. PDK includes belong in the project design/generator or configured include files, not in the generic engine.
-
-## Operate a run
-
-S3 records conservative failure classes and immutable attempt evidence. Safe
-operations use bounded exponential backoff; uncertain submissions never retry.
-After token/context/process interruption, `analog-agent recover RUN_DIR` checks
-existing evidence without submitting. See [failure and recovery contracts,
-including the LSF retrieval adapter change](docs/failure-recovery.md).
-
-S2 adds a shared read-only input hash gate and durable task heartbeat/progress
-monitor. `analog-agent inspect RUN_DIR` reports STALLED separately from the
-unchanged circuit state; it never resubmits. Legacy schematic runs without a
-creation inventory cannot be re-baselined implicitly. See [the input inventory,
-timeout/reconciliation contract and deployment limits](docs/task-safety.md).
-
-`analog-agent doctor [--json]` prints a read-only deterministic safety report
-and exits non-zero on any FAIL. It never starts an LLM, simulator or Bridge,
-installs dependencies, retries tasks or cleans locks/processes. See
-[check coverage, offline dependency scope and deployment limits](docs/doctor.md).
-
-```sh
-analog-agent new project.json --iteration 0 --set R=2k
+analog-agent new PROJECT.json --testbench ac
 analog-agent submit RUN_DIR
 analog-agent status RUN_DIR
-analog-agent resume RUN_DIR       # repeat for asynchronous LSF work
-analog-agent analyze RUN_DIR      # only after local verification
-analog-agent duty RUN_DIR         # inspect the current logical role
+analog-agent resume RUN_DIR       # asynchronous backend only; one poll per call
+analog-agent analyze RUN_DIR      # after VERIFIED
 analog-agent decide-run RUN_DIR --decision iterate --to netlist --reason "reviewed evidence"
 ```
 
-`submit` finishes in one call for Bridge/local. For LSF, keep the returned run and invoke `resume` again after the job changes state; `analog-agent run project.json` also stops after an asynchronous submission rather than blocking indefinitely. Every run preserves its task history, input hashes, phase handoffs, logs or retrieved artifacts, and analysis report. Resume a run in the **same path environment** in which it was created (for example, do not switch a run's stored `/mnt/e/...` paths to Windows `E:\...` mid-run).
+`analog-agent duty RUN_DIR` shows the role still responsible. After an interruption, use `inspect` and `recover` first; queue acceptance or process exit is not proof of success. For a legal external-worker `STAGED` handoff, `submit` reports the staging result and next submit obligation without creating submission files. Evidence conflicts return `UNKNOWN_STATE` with exit code 3 and require reconciliation.
 
-For an external worker that has only staged a run, `analog-agent submit RUN_DIR`
-reports `staging_result.json` and the simulation role's `submit` obligation without
-creating submission files. Missing, changed, or conflicting submission evidence
-reports `UNKNOWN_STATE` with the affected artifact and exits with code 3; reconcile
-the actual submission before attempting another operation.
-
-`workflow.submission` selects `manual` or `auto`; `return_mode` selects compact `summary` or full parsed data; `cleanup` selects `never` or local raw-file removal `after_success`. `simulation.remote_cleanup` is `never`, `manual`, or `after_verified`; `cleanup-remote RUN_DIR` calls the private adapter only after local verification. Do not treat a queue acceptance or process exit alone as simulation success.
-
-`duty` derives role ownership from durable artifacts, not from whether an agent process is still running. A `VERIFIED` run belongs to analysis until a reviewed `decide-run` routes it; an `ANALYZED` result is not automatically accepted. For an `external` site that sets `simulation.remote_cleanup_required: true`, a decided run cannot complete its handoff until `remote_cleanup.json` reports `VERIFIED_CLEANED`, references a matching local result-archive hash, and records each exact remote path as verified absent. The site worker supplies and verifies that evidence; ADO does not log in to the site or delete remote files itself.
-
-### Durable parallel campaigns
-
-For a user/analysis-AI-selected sweep, add an optional `campaign` block to `project.json`. These are execution limits, **not circuit-design defaults**:
-
-```json
-{
-  "campaign": {
-    "max_parallel": 2,
-    "max_points_per_cycle": 16,
-    "max_cycles": 10,
-    "max_total_points": 100,
-    "poll_interval_s": 10,
-    "metric_directions": {"gain_1g_db": "max"}
-  }
-}
-```
-
-Create a campaign, review a points file such as [the RC example](examples/campaign_points.json), and run one cycle:
+## Campaign and layout entry points
 
 ```sh
-analog-agent campaign new project.json
-analog-agent campaign add CAMPAIGN_DIR examples/campaign_points.json
+analog-agent campaign new PROJECT.json
+analog-agent campaign add CAMPAIGN_DIR POINTS.json
 analog-agent campaign run CAMPAIGN_DIR --max-seconds 3600
 analog-agent campaign status CAMPAIGN_DIR
 ```
 
-`campaign run` schedules at most `max_parallel` points at once and polls locally without an LLM call per job. Each finished run is retrieved, verified, and analyzed promptly; the cycle comparison is written only when every point is analyzed or has failed. The report lists parameters, metrics, verdicts, failures, and optional Pareto sets. No score, initial gₘ/Iᴅ point, search algorithm, or universal specification is built in. `metric_directions` only defines optional Pareto directions; the user and analysis AI choose the next cycle or final result.
+Each cycle yields a comparison for review. A private proposer or optional MOBO proposer may suggest the next batch but cannot submit it. [Offline replay](examples/replay_history.json) checks recorded decisions without creating runs or launching a simulator. After context/token loss, `campaign doctor` and `campaign brief` restore the durable state before continuation.
 
-After review, call `campaign add CAMPAIGN_DIR NEXT_POINTS.json --decision "reason" --select POINT_ID` for another cycle, or `campaign finish CAMPAIGN_DIR --decision "reason" --select POINT_ID`. A private function configured as `campaign.proposer` (`private/agents/analysis/scripts/site_proposer.py:propose`) can generate an initial or next-cycle proposal with `campaign propose CAMPAIGN_DIR`; inspect its saved JSON and explicitly `add` it. The [private proposer template](private.example/agents/analysis/scripts/site_proposer.py) intentionally contains no PDK method or automatic optimizer.
+Layout starts with `analog-agent layout prepare SCHEMATIC_RUN_DIR` after schematic verification and review gates. The user freezes [constraints](docs/layout-constraints.md), compares and freezes the live [floorplan](docs/layout.md), explicitly releases routing, then uses [typed routing and verification](docs/layout-routing.md). A [plugin-generated floorplan](docs/layout-floorplan-plugin.md) is a proposal, never automatically placed or frozen. DRC/LVS clean requires matching saved cellview and LVS-source evidence, not just a successful tool exit. Live tool adapters and foundry rules remain private and must be independently validated.
 
-An optional public multi-objective Bayesian proposer is available with the `[bo]`
-extra: set `campaign.proposer = "analog_agent.proposers.mobo:propose"`, declare
-bounded numeric/enum parameter schemas and objective directions, then review each
-proposal before `campaign add`. It never submits simulations. See [configuration,
-failure handling and deterministic metadata](docs/mobo.md) and the
-[equal-budget, five-seed synthetic benchmark](docs/bench_mobo.md).
+PEX and post-layout simulation are **not yet an integrated ADO stage**. A private extractor can in principle produce a parasitic netlist for a separate new simulation run, but the current layout state machine does not pin a cellview → PEX → post-layout-result hash chain or provide its review gate. Do not present that manual composition as a verified end-to-end layout flow.
 
-`campaign replay PROJECT.json HISTORY.json` is a shared, offline multi-cycle check; [this two-cycle example](examples/replay_history.json) runs with `project.example.json`. The history supplies recorded comparison and decision objects; the core validates each cycle and accumulates a circuit-neutral in-memory evidence ledger. It neither creates runs nor invokes a simulator, and needs no circuit-specific knowledge or proposer. If a private proposer is configured, replay also passes it the ledger to check proposals. A cycle can declare `"source": "proposal"` to require its observed parameter points to come from that round's proposal, or `"manual"` for a human-chosen point. CLI output contains checkpoint IDs and hashes, not private knowledge values. Reuse of private methods in the public project is a separate main-agent review following [knowledge promotion](agents/analysis/skills/knowledge-promotion/SKILL.md); user projects do not provide a publishing hook.
+## Documentation and verification
 
-### Private memory with a bounded LLM context
+- [Role instructions](AGENTS.md), [netlist](agents/netlist.md), [simulation](agents/simulation.md), [analysis](agents/analysis.md)
+- [Safety doctor](docs/doctor.md), [task monitoring and hash gates](docs/task-safety.md), [failure recovery](docs/failure-recovery.md)
+- [MOBO contract](docs/mobo.md) and [synthetic benchmark](docs/bench_mobo.md)
+- [Layout bridge audit](docs/design/layout-bridge-api.md), [layout contracts](docs/layout.md), [simulation-cost design](docs/design/simulation-cost.md)
 
-Memory is opt-in and stored in the user project, not this public repository. Copy [the empty private example](private.example/agents/analysis/memory.json) to `private/agents/analysis/memory.json` and configure `memory.path`, `memory.context`, `hard_keys`, `max_items` and `max_chars` as shown in the [private override example](private.example/agents/analysis/config/overrides.json). Context keys and circuit goals are user-owned. The default hard keys are `pdk`, `model_revision` and `topology`: a scoped entry is excluded when one of these disagrees or the query lacks that key. Among compatible **reviewed** entries, exact context/tag matches rank first; stable IDs break ties. Retrieval sends at most four short summaries and 1,200 serialized characters by default—no raw waveforms, full evidence, embeddings or vector database. Character limits are deterministic context caps, not exact tokenizer counts.
-
-```sh
-analog-agent memory brief project.json              # before the first design decision
-analog-agent memory show project.json ENTRY_ID      # full evidence only on demand
-analog-agent memory submit project.json private/agents/analysis/CANDIDATE.json
-analog-agent memory review project.json ENTRY_ID --approve --reason "reviewed evidence"
-# or: --reject --reason "counterexample or stale scope"
-```
-
-A candidate file under `private/` contains `id`, `kind`, a summary of at most 300 characters, a `scope` object, and nonempty `evidence` paths relative to the project, for example `{"id":"lesson_a","kind":"design","summary":"Measured observation within its stated scope","scope":{"pdk":"process_a","topology":"stage_a"},"evidence":["campaigns/ID/cycle-0001_comparison.json"]}`. Submission hashes the referenced files; review refuses changed evidence. Candidate/rejected entries are never retrieved. `campaign new` and each cycle save a compact memory snapshot; `campaign propose` passes one to the private proposer, and `campaign brief` restores the frozen selection after interruption. Changing the memory file during an active cycle blocks further scheduling until that cycle's input mismatch is resolved. `campaign replay` remains an in-memory decision check; it does not approve or publish memory.
-
-If a chat loses context or tokens, use `campaign doctor CAMPAIGN_DIR` to inspect durable point/run states and `campaign brief CAMPAIGN_DIR` for a compact AI handoff; then `campaign run` or `campaign step` continues without old chat history. `doctor` resolves project-local run and artifact paths saved on Windows or WSL without changing the evidence. An in-flight cycle must still execute in its original path environment; after a `REVIEW` decision, the next cycle may start in the other environment. `campaign pause`/`resume` stop/restart local scheduling, not already-submitted remote jobs. An interrupted submission with no local receipt is marked uncertain and **never blindly resubmitted**. An LSF site adapter may implement optional `reconcile(run, config, staged, intent)` to look up the real job by run ID; `analog-agent reconcile RUN_DIR` adopts that verified receipt, after which `campaign retry CAMPAIGN_DIR POINT_ID` re-enables the safe step. Without that lookup, inspect the scheduler manually and do not retry. A cycle freezes the public config, private overrides, and declared input-file hashes (template, rules, plugins, includes); list additional site files in `campaign.dependencies`. Change circuit configuration between cycles, not midway through one. Campaigns live under ignored `<project>/campaigns/`; ignore that directory in an independent project too. To end an obsolete paused or empty campaign without claiming its runs passed, use `campaign retire CAMPAIGN_DIR --reason "..." [--superseded-by CLOSED_CAMPAIGN_DIR]`; it retains a manifest backup and never touches runs or remote jobs.
-
-For sites that require an interactive or otherwise out-of-process executor, set `simulation.backend` to `external`. The same `campaign step/run/doctor` workflow stages a hashed deck and returns `AWAITING_EXECUTION` without submitting it. A private site simulation worker then performs transfer, submission, retrieval, and verification, writing the normal run handoffs and reaching `VERIFIED`; the next `campaign step` invokes the analysis role and continues the cycle. The core never embeds SSH, Telnet, LSF, or credential handling, and the site worker must preserve the run's state and hash contract. `external` is a resumable coordination boundary, not unattended simulation.
-
-If analysis inputs must be corrected after a run is verified, keep the original campaign for audit and create a new one with the corrected inputs. `campaign attach CAMPAIGN_DIR POINT_ID VERIFIED_RUN --reason "..."` checks the project, exact point, netlist/deck hashes, and simulation receipt before reusing that run; it never resubmits the job.
-
-## Results, waveform tools, and role boundaries
-
-The netlist worker owns `netlist_result.json`; the simulation worker owns `simulation_plan.json`, staging/submission/poll/retrieval handoffs, and finally `simulation_result.json`; the analysis worker owns `analysis_result.json`. The design netlist cannot be edited after its hash is handed off. Project-specific metric hooks receive parsed data and return scalar values. A `PASS` means **only that the user's configured `rules` passed**; it does not imply a universal circuit specification.
-
-Use [waveform_tool.py](agents/analysis/scripts/waveform_tool.py) with the JSON requests under `agents/analysis/config/` for separate windows, overlays, interpolated points, reference lines, eye folding, and FFT. NumPy and Matplotlib are optional dependencies needed for these plotting functions. Keep large waveform arrays in artifacts; show an LLM only the metrics, verdicts, relevant plot paths, and requested excerpts.
-
-`AGENTS.md` routes project-local skills to the roles. These skills and the common scripts are intended to remain stable; circuit- and PDK-specific knowledge belongs in user projects. The private memory layer augments decisions with reviewed evidence without changing the deterministic execution contract or automatically promoting user knowledge into public code.
-
-## Roadmap (not yet part of the released workflow)
-
-### Layout: L1/L2 manual-floorplan and constraint framework (opt-in)
-
-`analog-agent layout prepare SCHEMATIC_RUN_DIR` creates a separate hash-linked
-layout run from a VERIFIED/ANALYZED schematic. Private layout configuration,
-strict layout states and manual placement export/freeze are described in
-[the L1 contract](docs/layout.md). A complete audited read-only Bridge adapter
-is required; the supplied private example deliberately fails until implemented.
-No ADO operation moves manual instances or falls back to arbitrary SKILL/shell.
-L2 adds deterministic topology candidates, bounded reviewed-memory retrieval,
-user overrides, a hashed human constraints-freeze gate, and advisory manual
-placement checks. See [the L2 schema and review workflow](docs/layout-constraints.md).
-Draft warnings require explicit acknowledgment; routing release is a separate
-hashed human decision, including explicit acceptance of outstanding placement
-warnings. A placement freeze alone never authorizes routing.
-L3 adds JSON-only routing proposals, allowlisted owned-route workers, same-snapshot
-DRC/LVS handoffs and explicitly reviewed bounded fixes. See
-[the L3 adapter/security contract](docs/layout-routing.md). Missing audited private
-Bridge and native verification adapters fail closed; fake-backend tests do not
-certify a real router, foundry integration or live layout. L4 adds only the
-[reserved floorplan plugin interface](docs/layout-floorplan-plugin.md): manual
-by default, hashed private rules and an optional trusted `.py:function` that
-returns proposal JSON. The echo example implements no placement algorithm.
-`floorplan-generate` never applies placement, calls a Bridge operation, freezes
-or routes. A human must make the live layout match the reviewed proposal;
-the existing freeze, L2 check and separate routing-review gates still apply.
-`floorplan-diff` lists target origins/orientations and other live differences,
-without applying changes. `floorplan-score` evaluates deterministic enclosing
-area, aspect ratio, center-based HPWL estimates and L2 symmetry/matching
-compliance for candidate or live placement. Missing connectivity makes HPWL
-incomplete, not deceptively cheap. Axis/style preferences are checked against
-explicitly ID-linked frozen constraints before any generator call.
-No command moves manual instances.
-Plugins and `role_commands` are trusted code/config, not sandboxes; LLM roles
-are restricted to JSON proposals, with no Bridge capability or foundry rules.
-Every ADO Bridge operation is from the documented typed operation allowlist;
-there is no arbitrary SKILL, `system()` or `sh()` escape hatch. Plugin generation
-is a separate JSON-only operation, not a new Bridge placement capability.
-All plugin calls use `plugins.load_function` and all local inputs/outputs use
-`core.local_path`. Project-local plugins remain trusted executable Python (not
-a sandbox); audit them before configuration. LLM output must never become an
-executable plugin or arbitrary SKILL/shell text. Only the user-configured numeric
-tech summary is supplied as technology information, never raw foundry rule
-files, runsets, credentials or site command configuration.
-Keep `private/`, `runs/` and `layouts/` ignored in user project repositories.
-
-- **PVT and Monte Carlo:** add declarative corner, temperature, supply, variation and sample/seed configuration, with bounded scheduling, per-point provenance, partial-failure recovery, and cross-corner/statistical analysis. `virtuoso-bridge` already exposes Maestro controls, but ADO does **not** yet turn Maestro PVT/MC setup, execution and result collection into a portable, tested role workflow. The netlist-driven and Maestro-driven paths should share run evidence and analysis contracts while keeping PDK-specific corners and models private.
-- **Bayesian optimization extensions:** the optional multi-objective proposer now suggests reviewed batches from all cycle comparisons. Online model reuse, larger categorical spaces, trust-region search and multi-fidelity modeling remain future work. Initial points, objectives, specifications and stop decisions remain user/project-owned; no proposal replaces deterministic worker handoffs or auto-submits.
-- **Layout execution:** after the L1/L2 manual-floorplan and reviewed-constraint framework, add typed routing, DRC/LVS/PEX and post-layout feedback as separate stages. No live layout execution or verification is certified by the current fake-backend tests.
-
-These items will be promoted only after repeated real-project tests; structural/API availability alone is not electrical or workflow validation.
-
-## Verification and release boundaries
-
-Run the local tests with `python -m unittest discover -s tests -q`. They cover synchronous handoffs, rule generation, waveform operations, and a **fake** LSF adapter with cross-process resume; they do not certify any particular user's real cluster. A project-private interactive LSF/Spectre path has also been exercised with verified DC runs, hash-checked retrieval, and explicit remote cleanup. That site configuration, PDK, and circuit-specific analysis are not included in this repository. A successful dataset-presence rule is not electrical-spec acceptance; AC, STB, transient, noise, PVT, and Monte Carlo must be validated for each project. Before publishing a site configuration, verify login/identity, PDK readability, file-transfer hashes, scheduler job ID and status, simulator logs, result retrieval, and cleanup with captured output from that site.
-
-The CLI and artifact format are still evolving (`pyproject.toml` currently declares version `0.1.0`). The project is released under the [MIT License](LICENSE).
+Run `python -m unittest discover -s tests -q`. CI also runs the read-only doctor and uses hash-pinned test dependencies. Fake-backend tests validate public contracts; they cannot replace site-specific login, transfer hashes, simulator logs, retrieval, remote cleanup or native DRC/LVS evidence. This snapshot is for review before a stable `0.2.0` decision.
