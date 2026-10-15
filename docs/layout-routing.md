@@ -91,7 +91,17 @@ is not a pin. DRC/LVS does not establish matching/symmetry by itself.
 ## Audited typed dispatcher contract
 
 dispatch(request) -> JSON dict; request has operation, exact target library/cell/view,
-timeout_s and data-only payload. Separate Python process, -P where supported,
+timeout_s, data-only payload, and a versioned `adapter_context` with `schema_version=1`,
+canonical absolute `run_root`, `request_dir`, and `result_dir`. The child validates
+this context against its already-validated run and exclusive execution request/result
+directory before loading the adapter. Use `layout_adapter_context.resolve_run_path(context,
+relative)` for run-relative payload paths such as LVS source and destination; it rejects
+absolute paths, traversal, and symlink escapes. The process cwd is deliberately empty
+and must never be used to resolve payload paths. Result envelopes bind the context hash;
+an inconsistent envelope requires reconciliation. Placement readers receive the same
+versioned `adapter_context` (with `reader_results/` as both channel directories).
+The floorplan generator's existing proposal `generate(context)` payload contract remains
+unchanged; it has no layout file-writing authority. Separate Python process, -P where supported,
 pinned package path and empty cwd. Exclusive mode-0600 result files and private
 stderr are retained under execution/; stdout is never the result channel.
 No arbitrary SKILL, system(), sh(), shell, library mutation or recovery hook.

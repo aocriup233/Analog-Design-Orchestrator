@@ -231,7 +231,9 @@ lock: concurrent human editing remains a snapshot/use race, not solved by hashes
 
 The only L1 operation ID is `read_placement`. The trusted adapter signature is
 `read_placement(context) -> floorplan dict`. Context contains only operation ID,
-exact target library/cell/view, and numeric timeout; it contains no live client,
+exact target library/cell/view, numeric timeout, and the versioned, run-confined
+`adapter_context` shared with typed operations (see [routing and verification](layout-routing.md));
+it contains no live client,
 raw SKILL, shell command, rule content or writable floorplan operation. The
 worker supplies/overwrites the export timestamp and validates the full schema.
 Adapters use ValueError for known input rejection and NotImplementedError for

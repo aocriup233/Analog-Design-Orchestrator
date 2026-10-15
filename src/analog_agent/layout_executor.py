@@ -17,6 +17,7 @@ from .layout_bridge import _kill_reader, _private_file, ReaderStateError
 from .layout_runs import layout_context, layout_path
 from .plugins import load_function
 from .parameters import number_value
+from .layout_adapter_context import adapter_context, context_sha256, validate_adapter_context
 
 OPERATIONS = frozenset({"read_layout_snapshot", "read_terminals", "append_path", "append_via",
                         "remove_owned_routes", "save_target", "export_verification_snapshot", "verify",
@@ -48,6 +49,13 @@ def configured(run, operation):
 
 
 def call_adapter(run, request):
+    run = layout_path(run)
+    channel = request.get("adapter_context") if isinstance(request, dict) else None
+    if not isinstance(channel, dict):
+        raise ValueError("Typed adapter requires a versioned run context")
+    request_dir = Path(channel.get("request_dir", ""))
+    result_dir = Path(channel.get("result_dir", ""))
+    validate_adapter_context(channel, run, request_dir, result_dir)
     cfg, project, reference = configured(run, request["operation"])
     function = load_function(reference, run.parent.parent, project)
     return function(request["payload"]) if request["operation"] == "generate_floorplan" else function(request)
@@ -70,8 +78,9 @@ def _execute(run, operation, payload):
     directory = local_path(run, f"execution/{token}")
     directory.mkdir(parents=True, exist_ok=False, mode=0o700)
     request, result, log = directory / "request.json", directory / "result.json", directory / "stderr.log"
+    channel = adapter_context(run, directory, directory)
     write_json(request, {"operation": operation, "target": {"library": cfg["library"], "cell": cfg["cell"], "view": "layout"},
-                         "timeout_s": timeout, "payload": payload})
+                         "timeout_s": timeout, "payload": payload, "adapter_context": channel})
     command = [sys.executable] + (["-P"] if sys.version_info >= (3, 11) else [])
     command += ["-m", "analog_agent.layout_executor", str(run), str(request), str(result)]
     env = os.environ.copy()
@@ -103,6 +112,9 @@ def _execute(run, operation, payload):
         envelope = read_json(local_path(run, str(result)))
     except (OSError, ValueError) as exc:
         raise ReaderStateError("Adapter result is absent or malformed; reconcile") from exc
+    if not isinstance(envelope, dict) or envelope.get("context_sha256") != context_sha256(channel):
+        raise ReaderStateError("Typed adapter envelope has inconsistent context; reconcile")
+    envelope = {key: value for key, value in envelope.items() if key != "context_sha256"}
     if process.returncode == 0 and envelope == {"status": "unsupported"}:
         raise ValueError("Typed adapter operation is not implemented; no raw fallback")
     if process.returncode == 0 and isinstance(envelope, dict) and set(envelope) == {"status", "code", "no_side_effects"} and envelope["status"] == "retryable":
@@ -123,7 +135,9 @@ def main():
     with _private_file(result) as channel:
         try:
             with contextlib.redirect_stdout(sys.stderr):
-                value = call_adapter(run, read_json(request))
+                message = read_json(request)
+                validate_adapter_context(message.get("adapter_context"), run, request.parent, result.parent)
+                value = call_adapter(run, message)
             envelope = {"status": "ok", "result": value}
         except NotImplementedError:
             traceback.print_exc(file=sys.stderr)
@@ -133,6 +147,7 @@ def main():
             traceback.print_exc(file=sys.stderr)
             envelope = ({"status": "retryable", "code": error.code, "no_side_effects": error.no_side_effects}
                         if isinstance(error, RetryableError) else {"status": "crash"})
+        envelope["context_sha256"] = context_sha256(adapter_context(run, request.parent, result.parent))
         json.dump(envelope, channel, allow_nan=False)
         channel.flush()
         os.fsync(channel.fileno())

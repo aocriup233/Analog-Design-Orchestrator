@@ -233,7 +233,7 @@ class LayoutAdapterTest(LayoutRunsFixture):
             adapter_read(run)
         reader = self.root / "private/layout/reader.py"
         reader.write_text("def read(context):\n    assert context['operation'] == 'read_placement'\n"
-                          "    assert set(context) == {'operation', 'target', 'timeout_s'}\n"
+                          "    assert set(context) == {'operation', 'target', 'timeout_s', 'adapter_context'}\n"
                           "    return {'observed': context['target']}\n", encoding="utf-8")
         cfg["layout"]["bridge"]["reader"] = "private/layout/reader.py:read"
         write_json(self.layout_config, cfg)
