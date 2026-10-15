@@ -114,8 +114,10 @@ class FloorplanPluginTest(FloorplanPluginFixture):
 
     def test_generator_uses_central_plugin_callable_policy(self):
         self.configure(code="from os import system as generate\n")
+        from analog_agent.layout_adapter_context import adapter_context
         with self.assertRaisesRegex(ValueError, "Forbidden"):
-            call_adapter(self.run, {"operation": "generate_floorplan", "payload": {}})
+            call_adapter(self.run, {"operation": "generate_floorplan", "payload": {},
+                                    "adapter_context": adapter_context(self.run, self.run, self.run)})
 
     def test_manual_default_and_draft_gate(self):
         self.pending()

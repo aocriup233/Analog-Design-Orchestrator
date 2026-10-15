@@ -17,6 +17,7 @@ from .core import _fsync_directory, local_path, read_json, utc_now
 from .layout_runs import LayoutEvidenceError, layout_context, layout_path
 from .parameters import number_value
 from .plugins import load_function
+from .layout_adapter_context import adapter_context, validate_adapter_context
 
 
 class ReaderInputError(ValueError):
@@ -27,7 +28,9 @@ class ReaderStateError(RuntimeError):
     """Unknown Bridge state; reconcile before proceeding."""
 
 
-def adapter_read(run: Path) -> dict:
+def adapter_read(run: Path, result_dir: Path | None = None) -> dict:
+    run = layout_path(run)
+    result_dir = result_dir or local_path(run, "reader_results")
     cfg, project = layout_context(run)
     reference = cfg.get("bridge", {}).get("reader")
     if not reference:
@@ -35,7 +38,9 @@ def adapter_read(run: Path) -> dict:
     function = load_function(reference, Path(project["_project_root"]), project)
     context = {"operation": "read_placement", "target": {"library": cfg["library"],
                "cell": cfg["cell"], "view": "layout"},
-               "timeout_s": number_value(str(cfg.get("timeout_s", 300)))}
+               "timeout_s": number_value(str(cfg.get("timeout_s", 300))),
+               "adapter_context": adapter_context(run, result_dir, result_dir)}
+    validate_adapter_context(context["adapter_context"], run, result_dir, result_dir)
     return function(context)
 
 
@@ -143,7 +148,7 @@ def main() -> None:
     with _private_file(result) as channel:
         try:
             with contextlib.redirect_stdout(sys.stderr):
-                value = adapter_read(run)
+                value = adapter_read(run, result.parent)
             envelope = {"status": "ok", "result": value}
         except LayoutEvidenceError:
             traceback.print_exc(file=sys.stderr)
