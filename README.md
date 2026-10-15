@@ -162,6 +162,12 @@ analog-agent decide-run RUN_DIR --decision iterate --to netlist --reason "review
 
 `submit` finishes in one call for Bridge/local. For LSF, keep the returned run and invoke `resume` again after the job changes state; `analog-agent run project.json` also stops after an asynchronous submission rather than blocking indefinitely. Every run preserves its task history, input hashes, phase handoffs, logs or retrieved artifacts, and analysis report. Resume a run in the **same path environment** in which it was created (for example, do not switch a run's stored `/mnt/e/...` paths to Windows `E:\...` mid-run).
 
+For an external worker that has only staged a run, `analog-agent submit RUN_DIR`
+reports `staging_result.json` and the simulation role's `submit` obligation without
+creating submission files. Missing, changed, or conflicting submission evidence
+reports `UNKNOWN_STATE` with the affected artifact and exits with code 3; reconcile
+the actual submission before attempting another operation.
+
 `workflow.submission` selects `manual` or `auto`; `return_mode` selects compact `summary` or full parsed data; `cleanup` selects `never` or local raw-file removal `after_success`. `simulation.remote_cleanup` is `never`, `manual`, or `after_verified`; `cleanup-remote RUN_DIR` calls the private adapter only after local verification. Do not treat a queue acceptance or process exit alone as simulation success.
 
 `duty` derives role ownership from durable artifacts, not from whether an agent process is still running. A `VERIFIED` run belongs to analysis until a reviewed `decide-run` routes it; an `ANALYZED` result is not automatically accepted. For an `external` site that sets `simulation.remote_cleanup_required: true`, a decided run cannot complete its handoff until `remote_cleanup.json` reports `VERIFIED_CLEANED`, references a matching local result-archive hash, and records each exact remote path as verified absent. The site worker supplies and verifies that evidence; ADO does not log in to the site or delete remote files itself.
