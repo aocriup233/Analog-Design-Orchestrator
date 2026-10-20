@@ -9,3 +9,6 @@ campaigns/
 .env
 /private/
 /output/
+/build/
+/dist/
+*.egg-info/

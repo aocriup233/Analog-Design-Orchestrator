@@ -83,3 +83,10 @@ PEX and post-layout simulation are **not yet an integrated ADO stage**. A privat
 - [Layout bridge audit](docs/design/layout-bridge-api.md), [layout contracts](docs/layout.md), [simulation-cost design](docs/design/simulation-cost.md)
 
 Run `python -m unittest discover -s tests -q`. CI also runs the read-only doctor and uses hash-pinned test dependencies. Fake-backend tests validate public contracts; they cannot replace site-specific login, transfer hashes, simulator logs, retrieval, remote cleanup or native DRC/LVS evidence. This snapshot is for review before a stable `0.2.0` decision.
+
+Technology-independent Python gm/Id lookup, sizing, desktop UI and optimizer interfaces: [guide](docs/gmid.zh-CN.md). The examples in examples/gmid are synthetic. Keep all real process tables in project-private storage.
+
+Install `.[gmid]` for the optional lookup dependencies. Single-corner,
+single-temperature tables are supported; uncharacterized conditions are never
+extrapolated. MOBO can use private lookup requests as cold-start seeds.
+See the [public package boundary and release checks](docs/public-release.md).

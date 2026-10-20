@@ -83,3 +83,7 @@ PEX 与后仿**尚不是集成的 ADO 阶段**。原则上私有提取器可以�
 - [布局 Bridge 审计](docs/design/layout-bridge-api.md)、[版图契约](docs/layout.md)、[仿真成本设计](docs/design/simulation-cost.md)
 
 测试命令为 `python -m unittest discover -s tests -q`。CI 还会运行只读 doctor，并使用哈希锁定的测试依赖。假后端测试验证公用契约，不能替代站点实际登录、传输哈希、仿真日志、回传、远端清理或原生 DRC/LVS 证据。本暂定快照供稳定版 `0.2.0` 决策前审核。
+
+Python 通用 gm/Id 查表、尺寸计算、桌面界面与优化器接线见 [使用说明](docs/gmid.zh-CN.md)。支持统一 SI CSV 和显式旧表映射；真实工艺表仅保留在项目 private/。示例位于 examples/gmid，全部为合成数据。
+
+公开包边界与wheel/sdist检查见[发布检查](docs/public-release.md)。支持明确的单工艺角、单温度表；不对未表征条件外推。
