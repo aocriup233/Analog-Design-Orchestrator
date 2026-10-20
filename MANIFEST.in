@@ -1,0 +1,18 @@
+include LICENSE README.md README.zh-CN.md pyproject.toml
+recursive-include src/analog_agent *.py *.mjs
+prune private
+prune private.example
+prune runs
+prune layouts
+prune campaigns
+prune output
+prune private_logs
+prune reader_results
+prune tests
+prune docs
+prune examples
+prune agents
+prune common
+prune scripts
+prune .github
+global-exclude *.pyc *.pyo .env .env.*

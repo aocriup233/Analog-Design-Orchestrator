@@ -276,7 +276,11 @@ def propose(context: dict) -> dict:
     cold = sum(row["valid"] for row in rows) < _positive(bo.get("n_init", 2 * len(space.fields) + 1), "bo.n_init")
     seen = {space.key(row["parameters"]) for row in rows}
     seed_points = []
-    for item in bo.get("seed_points", []):
+    initial_points = list(bo.get("seed_points", []))
+    if cold and bo.get("gmid_seeds", False):
+        from .gmid import propose as propose_gmid
+        initial_points.extend(propose_gmid(dict(context, cycle_count=context.get("cycle_count", 0)))["points"])
+    for item in initial_points:
         values = space.values(item.get("parameters", item))
         space.encode(values)
         key = space.key(values)

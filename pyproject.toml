@@ -11,15 +11,21 @@ requires-python = ">=3.10"
 dependencies = []
 
 [project.optional-dependencies]
+gmid = ["numpy>=1.23", "scipy>=1.9"]
 bridge = ["virtuoso-bridge"]
 analysis = ["numpy>=1.23", "matplotlib>=3.7"]
 bo = ["botorch>=0.13", "gpytorch", "torch", "scipy"]
 
 [project.scripts]
+gmid-lookup = "analog_agent.gmid:main"
+gmid-gui = "analog_agent.gmid_gui:main"
+gmid-import = "analog_agent.gmid_import:main"
 analog-agent = "analog_agent.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+include = ["analog_agent", "analog_agent.*"]
+namespaces = false
 
 [tool.setuptools.package-data]
 analog_agent = ["*.mjs"]
